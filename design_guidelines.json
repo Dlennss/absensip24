@@ -1,0 +1,109 @@
+{
+  "theme_and_mode": {
+    "mode": "light",
+    "rationale": "Simple, functional administrative tools and forms perform best with high-contrast light modes to ensure legibility and ease of use in various lighting conditions. Clean and straightforward fits the 'simple' requirement."
+  },
+  "typography": {
+    "headings": {
+      "family": "'Manrope', sans-serif",
+      "weights": ["500", "800"],
+      "import_url": "https://fonts.googleapis.com/css2?family=Manrope:wght@500;800&display=swap"
+    },
+    "body": {
+      "family": "'IBM Plex Sans', sans-serif",
+      "weights": ["400", "500", "600"],
+      "import_url": "https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&display=swap"
+    },
+    "hierarchy": {
+      "h1": "text-4xl sm:text-5xl font-extrabold tracking-tight",
+      "h2": "text-2xl sm:text-3xl font-bold tracking-tight",
+      "h3": "text-xl font-bold tracking-tight",
+      "body": "text-base leading-relaxed",
+      "labels_overlines": "text-xs font-semibold uppercase tracking-[0.2em]"
+    }
+  },
+  "colors": {
+    "archetype": "ARCHETYPE 4: SWISS & HIGH-CONTRAST (Modified for utility)",
+    "palette": {
+      "background": "0 0% 98%",
+      "foreground": "0 0% 4%",
+      "primary": "221 83% 53%",
+      "primary-foreground": "0 0% 100%",
+      "card": "0 0% 100%",
+      "card-foreground": "0 0% 4%",
+      "border": "0 0% 90%",
+      "muted": "0 0% 96%",
+      "muted-foreground": "0 0% 45%",
+      "destructive": "0 84% 60%",
+      "destructive-foreground": "0 0% 100%"
+    },
+    "rules": [
+      "Use pure high-contrast text. No gray-on-gray for essential data.",
+      "The primary color (Crisp Blue) should only be used for CTAs (Submit, Login) and active states to guide action.",
+      "Borders should be crisp and visible."
+    ]
+  },
+  "visual_enhancers": {
+    "surfaces": "Grid Borders (The 'Technical' Look) for dashboard, flat minimal cards with 1px border and no shadow for the form.",
+    "radius": "sm (0.25rem) or none to give a rigid, functional feel.",
+    "shadows": "Minimal. Use sharp 1px borders instead of soft shadows. Hover states can have a slight lift with a crisp shadow.",
+    "glassmorphism": "Avoid in this clinical tool to prevent visual distraction. Solid colors only.",
+    "icons": "lucide-react (Line style, 1.5px stroke weight max for crispness)"
+  },
+  "layouts_and_spacing": {
+    "spacing_scale": "Generous Spacing. Use p-6 or p-8 for form containers and cards. Tailwind standard scale.",
+    "form_layout": "Center the attendance form in a clean, narrow container (max-w-md) with ample vertical breathing room (py-20).",
+    "dashboard_layout": "Top navigation or sleek sidebar. Main content in a dense grid (gap-6). High Density Grid for data tables.",
+    "alignment": "Left-align all form labels, inputs, and tabular data. Optical alignment over geometric."
+  },
+  "motion": {
+    "interactions": "Micro-animations only. Translate-y-[-2px] on button hover, sharp color transitions (duration-200 ease-out).",
+    "page_transitions": "Staggered fade-in for table rows.",
+    "feedback": "Use 'sonner' for all success/error toasts with a crisp, bordered aesthetic."
+  },
+  "accessibility": {
+    "contrast": "Ensure all text, especially placeholder and muted text, meets at least 4.5:1 ratio.",
+    "focus": "All interactive elements MUST have a high-contrast focus ring (focus:ring-2 focus:ring-primary focus:ring-offset-2).",
+    "testing": "All interactive and key informational elements MUST include a data-testid attribute (e.g., data-testid='submit-attendance', data-testid='login-button')."
+  },
+  "components": [
+    {
+      "name": "Attendance Form",
+      "path": "/app/frontend/src/components/attendance/AttendanceForm.js",
+      "instructions": "Use Shadcn Form, Input. The date should be a disabled input showing today's date automatically. The photo upload needs a custom styled file input area (dashed border, centered camera icon) strictly with max 5MB validation client-side. No complex gradients, just solid borders."
+    },
+    {
+      "name": "Admin Dashboard Table",
+      "path": "/app/frontend/src/components/admin/AttendanceTable.js",
+      "instructions": "Use Shadcn Table. Dense, high-density layout. Actions (Edit/Delete/View Photo) should be accessible via an icon button or dropdown menu."
+    },
+    {
+      "name": "Admin Recap & Salary",
+      "path": "/app/frontend/src/components/admin/RecapTable.js",
+      "instructions": "A separate table or view showing Employee Name, Total Days Present, and Calculated Salary (Total Days * Daily Rate). Ensure there is an input to set/edit the 'Daily Rate' globally or per user depending on logic."
+    },
+    {
+      "name": "Photo Preview Modal",
+      "path": "/app/frontend/src/components/admin/PhotoPreviewDialog.js",
+      "instructions": "Use Shadcn Dialog. Clear, large preview of the uploaded photo with a crisp border. No blurry backdrop, use a solid dark overlay (bg-black/80)."
+    }
+  ],
+  "image_urls": {},
+  "instructions_to_main_agent": [
+    "Prioritize HTML form logic properly with React hook form and Zod validation.",
+    "Do NOT add transition: all in CSS. Use specific transitions (e.g., transition: background-color 0.2s ease).",
+    "Do NOT center align the app container (.App { text-align: center; } must be removed from App.css).",
+    "Use Lucide-react for all icons (e.g., Camera, User, Calendar, LogOut).",
+    "Ensure the photo upload only accepts images (.jpg, .png) and validates the 5MB limit client-side before submission, showing a Sonner toast if it fails.",
+    "Implement the 'Gaji per hari' (Salary per day) setting in the admin dashboard so the admin can input a rate and automatically calculate total salary based on total attendance."
+  ],
+  "universal_guidelines_for_main_agent": [
+    "Never use AI assistant Emoji characters (🤖🧠💭💡) for icons. Use strictly Lucide icons.",
+    "Always use a modern button style with a sharp or slightly rounded look (sm radius), with interaction animations (hover:bg-primary/90).",
+    "Every interaction needs micro-animations. Static is dead.",
+    "Avoid generic centered layouts except for the login/attendance standalone wrapper cards.",
+    "Use 2-3x more spacing than typical (p-8 instead of p-4 on cards) for a premium breathable feel.",
+    "Use 'sonner' for toasts. Do not use standard alert().",
+    "Add fonts via Google Fonts in index.css or index.html."
+  ]
+}

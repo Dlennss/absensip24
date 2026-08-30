@@ -1,0 +1,38 @@
+{
+  "summary": "Regression retest after bug fixes. Backend: 51 pytest cases (serial, -n 0) — 51/51 PASSED, including all 5 new regression suites: brute-force lockout now returns 429 (never 500) after exactly 5 failed attempts and admin login recovers after login_attempts cleanup; negative daily_rate rejected (422) while 0 still accepted; invalid month params ('abc', '.*', '2026-1', '2026/01', '^2026', '2026-13-01') rejected with 400 on both GET /api/attendance and GET /api/recap while valid YYYY-MM works; future dates rejected with 400 on POST /api/attendance/manual and PUT /api/attendance/{id} while today is accepted. Frontend: admin login, add record, future-date rejection toast ('Tanggal absensi tidak boleh di masa depan'), delete confirmation AlertDialog (cancel keeps record — verified after reload; confirm deletes — verified after reload), Rekap & Gaji totals (Budi Santoso 1 hari / Rp 150.000), photo preview dialog served from REACT_APP_BACKEND_URL (/api/uploads/*.jpg returns 200 image/jpeg), employee page validation + successful submit + duplicate 409 message. All previously reported CRITICAL/minor defects verified fixed. DB restored to seed state (only Budi Santoso 2026-08-30, rate 150000) and db.login_attempts emptied.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "CORS middleware", "issue": "allow_credentials=True combined with CORS_ORIGINS='*' — browsers reject credentialed requests with wildcard origin. Harmless today (auth uses Bearer token in localStorage, not cookies) but should use explicit origins if cookies are ever adopted."},
+      {"endpoint": "PUT /api/rates", "issue": "Rate documents are never cleaned up; deleting all attendance rows for a name leaves an orphan rate doc (cosmetic/data hygiene, unchanged from iteration_1)."},
+      {"endpoint": "app lifecycle", "issue": "Still uses deprecated @app.on_event('startup'/'shutdown'); migrate to lifespan handlers."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Admin dashboard - Add/Edit dialogs & month filters", "issues": ["Still uses native browser <input type=date/month> pickers instead of the shadcn Calendar/Popover — look & feel differs per browser (pre-existing, low priority)", "No loading skeleton/spinner while attendance & recap data load"]},
+      {"screen": "Add/Edit attendance dialog", "issues": ["React a11y warning: 'Missing Description or aria-describedby for DialogContent' logged on open — add DialogDescription"]}
+    ]
+  },
+  "test_report_links": ["/app/backend/tests/backend_test.py", "/app/backend/tests/conftest.py", "/app/test_reports/pytest/pytest_results.xml"],
+  "action_items": [
+    "Optional cleanup: add DialogDescription to add/edit attendance dialogs to remove the a11y console warning.",
+    "Optional: use explicit CORS origins instead of '*' with allow_credentials=True.",
+    "Optional: migrate on_event startup/shutdown to FastAPI lifespan."
+  ],
+  "critical_code_review_comments": [
+    "Lockout fix verified: AsyncIOMotorClient(tz_aware=True) + email-only lockout key means the counter is no longer split across ingress proxy IPs; exactly 5 failed attempts then 429.",
+    "MONTH_RE validation now blocks regex injection into the $regex month filter — good; recap and attendance both covered.",
+    "No file-content sniffing on uploads (only content_type header + client filename extension) — still an accepted risk, not blocking."
+  ],
+  "updated_files": ["/app/backend/tests/backend_test.py"],
+  "success_rate": {"backend": "100% (51/51)", "frontend": "100% (all flows tested passed)"},
+  "seed_data_creation": "Temporary TEST_ prefixed attendance/rate rows created and deleted; db.login_attempts cleared. DB back to seed: Budi Santoso 2026-08-30, rate 150000.",
+  "should_call_test_agent_after_fix": false,
+  "should_main_agent_self_test": true,
+  "test_credentials": "admin: fathurrizqi254@gmail.com / admin123 — works; bcrypt hash $2b$, unique index on users.email present; seed_admin updates hash if ADMIN_PASSWORD changed.",
+  "context_for_next_testing_agent": "Run `cd /app/backend && python -m pytest tests/ -q -n 0` (serial matters: lockout tests mutate the shared db.login_attempts and would race with the configured -n 2). New class TestRegressionFixes covers lockout 429+recovery, negative rate, month validation, future dates. After any failed-login test always run db.login_attempts.delete_many({}). Auth = Bearer JWT in localStorage('admin_token'); no httpOnly cookies (playbook item 2 N/A). Frontend testids: attendance-submit-button / attendance-name-input / attendance-photo-input (employee), add-attendance-button, add-name-input, add-date-input, add-save-button, delete-attendance-button-{id}, delete-confirm-dialog, delete-cancel-button, delete-confirm-button, tab-data-absensi, tab-rekap-gaji.",
+  "rca_of_the_issue": "Previous CRITICAL 500 in the lockout branch (tz-naive vs tz-aware datetime compare) is resolved by tz_aware=True on the Motor client; lockout key changed to email-only so the ingress proxy IP rotation no longer splits the counter. Verified end-to-end: 5x401 then 429, and normal login works again once login_attempts is cleared."
+}

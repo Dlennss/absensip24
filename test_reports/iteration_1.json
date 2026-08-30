@@ -1,0 +1,80 @@
+{
+  "summary": "Full e2e test of Absensi Karyawan app (backend pytest + Playwright UI). Backend: 35 pytest cases covering health, auth/JWT, public attendance submit (validation, 5MB limit, non-image, duplicate 409), admin authorization (401 on all protected endpoints), manual add/update/delete CRUD with persistence re-verification, month filter, recap + rates computation, bcrypt hash format, unique index, CORS preflight. 34/35 passed. Frontend: employee page (validation toasts, upload, form reset, duplicate 409), admin login (valid/invalid), dashboard Data Absensi tab (table, photo preview dialog, month filter, add/edit/delete with reload persistence), Rekap & Gaji tab (rate save + salary math + persistence), logout & route guard, mobile 390px layout. All UI flows passed. One CRITICAL backend defect found: login brute-force lockout crashes with HTTP 500 instead of 429.",
+  "backend_issues": {
+    "critical": [
+      {
+        "endpoint": "POST /api/auth/login",
+        "issue": "Brute-force lockout path raises TypeError -> HTTP 500. server.py:134 compares `datetime.now(timezone.utc) < locked_until`, but Motor returns tz-NAIVE datetimes from Mongo => 'can't compare offset-naive and offset-aware datetimes'. Reproduced: repeated failed logins return 401 x N then 500 forever (never 429). Effect: lockout never returns the intended 429 message and the login endpoint becomes permanently broken (500) for that IP+email pair, i.e. a self-inflicted DoS on a real admin account (5 wrong passwords => admin can no longer log in at all, only 500s, for 15 min). Fix: store/compare UTC-aware (e.g. locked_until.replace(tzinfo=timezone.utc)) or use AsyncIOMotorClient(..., tz_aware=True).",
+        "priority": "CRITICAL"
+      }
+    ],
+    "minor": [
+      {
+        "endpoint": "POST /api/auth/login",
+        "issue": "Rate-limit key uses request.client.host, which behind the k8s ingress is the proxy pod IP (observed 10.231.129.137 / .138 rotating). Attempt counters get split across proxy IPs so >5 wrong passwords are allowed (observed 9-10 attempts before the threshold was hit on a single key). Should use X-Forwarded-For (first hop) and/or key by email only."
+      },
+      {
+        "endpoint": "PUT /api/rates",
+        "issue": "daily_rate has no lower bound (negative values accepted -> negative total_salary). Add Pydantic ge=0 validation. Also rates are keyed by name_lower with no cleanup, so deleting all attendance rows leaves orphan rate documents."
+      },
+      {
+        "endpoint": "POST /api/attendance/manual, PUT /api/attendance/{id}",
+        "issue": "No date sanity check: future dates (e.g. 2099-12-31) are accepted for attendance records."
+      },
+      {
+        "endpoint": "GET /api/attendance",
+        "issue": "`month` query param is injected raw into a $regex ('^{month}'); no format validation (e.g. month='.*' or invalid strings silently change results). Validate with a YYYY-MM pattern."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {
+        "screen": "Admin dashboard - Data Absensi",
+        "issues": [
+          "Delete (trash) button deletes immediately with no confirmation dialog - high risk of accidental data loss; add an AlertDialog confirm.",
+          "Add/Edit dialogs and month filters use native browser date/month pickers (<input type=date/month>) instead of the shadcn Calendar/Popover component, so look & feel differ per browser.",
+          "No loading skeleton/spinner while attendance & recap data are fetched (table briefly shows the 'Belum ada data' empty state)."
+        ]
+      },
+      {
+        "screen": "Admin dashboard - month state",
+        "issues": [
+          "Default month is computed with new Date().toISOString().slice(0,7) (UTC), while the backend stamps dates in Asia/Jakarta. On the 1st of a month before 07:00 WIB the dashboard opens on the previous month and today's records are hidden."
+        ]
+      }
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/backend_test.py",
+    "/app/backend/tests/conftest.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "CRITICAL: fix tz-naive/aware comparison in login lockout (server.py:134) so lockout returns 429 and never 500; verify a locked account recovers and that correct credentials still work.",
+    "Use X-Forwarded-For / email-only key for the login attempt counter so the 5-attempt lockout is actually enforced behind the ingress.",
+    "Add confirmation dialog before deleting an attendance record.",
+    "Add validation: daily_rate >= 0, month param format YYYY-MM, and reject implausible/future attendance dates.",
+    "Compute the dashboard default month in Asia/Jakarta instead of UTC."
+  ],
+  "critical_code_review_comments": [
+    "server.py login(): Mongo returns naive datetimes - always normalise (tz_aware=True on the Motor client) before comparing with datetime.now(timezone.utc); this exact bug turns the security control into a 500-loop.",
+    "server.py uses deprecated @app.on_event('startup'/'shutdown'); migrate to lifespan handlers.",
+    "list_attendance/recap interpolate the `month` string directly into a $regex without validation - validate input with Pydantic/Query(pattern=...).",
+    "No file-content sniffing for uploads: only content_type header + extension from client are trusted; extension is taken from the user filename and written to disk (path traversal is mitigated by uuid name but arbitrary extension is stored).",
+    "Frontend: AttendanceTable.js photo URL is built with API.replace('/api','') which would break if the backend URL itself contains '/api'; prefer process.env.REACT_APP_BACKEND_URL directly."
+  ],
+  "updated_files": [
+    "/app/backend/tests/conftest.py",
+    "/app/backend/tests/backend_test.py"
+  ],
+  "success_rate": {"backend": "97% (34/35)", "frontend": "100% (all tested flows passed)"},
+  "seed_data_creation": "All test records were created with TEST_ prefixes and removed after testing (attendance + rates + login_attempts cleaned). DB restored to the original single seed row 'Budi Santoso' (2026-08-30) with rate 150000.",
+  "should_call_test_agent_after_fix": true,
+  "should_main_agent_self_test": false,
+  "test_credentials": "admin: fathurrizqi254@gmail.com / admin123 (from /app/memory/test_credentials.md) - works, bcrypt hash starts with $2b$, unique index on users.email present",
+  "context_for_next_testing_agent": "Run `cd /app/backend && python -m pytest tests/ -q`. Only TestAuth::test_brute_force_lockout fails (500 instead of 429 - see rca). WARNING: failed-login tests can poison db.login_attempts and make POST /api/auth/login return 500 for the admin identifier until the app is fixed; clear it with db.login_attempts.delete_many({}) before UI tests. Auth uses Bearer JWT in localStorage('admin_token'), NOT httpOnly cookies (playbook item 2 not applicable/not implemented). Image fixtures used: /tmp/test_photo.png, /tmp/big_photo.png (>5MB), /tmp/notimage.txt. All UI flows (employee submit, admin CRUD, recap/rates, logout, mobile) verified passing on 2026-08-30.",
+  "rca_of_the_issue": "POST /api/auth/login: db.login_attempts stores locked_until via datetime.now(timezone.utc)+15min; PyMongo/Motor returns it back as a tz-naive datetime (client not created with tz_aware=True). Once count>=5 the branch at server.py:134 compares naive vs aware datetimes -> TypeError -> unhandled 500. Repro: POST 10 wrong-password logins for any email; responses go 401...401 then 500 on every subsequent call. Mitigation: normalise the stored value (locked_until.replace(tzinfo=timezone.utc)) or pass tz_aware=True to AsyncIOMotorClient, and key attempts on X-Forwarded-For instead of the proxy IP."
+}
