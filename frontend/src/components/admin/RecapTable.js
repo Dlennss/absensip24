@@ -1,8 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { toast } from "sonner";
-import { Save } from "lucide-react";
 import api, { formatApiError, formatRupiah } from "@/lib/api";
-import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -14,19 +12,17 @@ import {
   TableRow,
 } from "@/components/ui/table";
 
+const BASE_SALARY = 4000000;
+const WORKING_DAYS = 26;
+const DAILY_RATE = BASE_SALARY / WORKING_DAYS;
+
 export default function RecapTable({ month, onMonthChange }) {
   const [recap, setRecap] = useState([]);
-  const [rates, setRates] = useState({});
 
   const fetchRecap = useCallback(async () => {
     try {
       const { data } = await api.get("/recap", { params: { month } });
       setRecap(data);
-      const map = {};
-      data.forEach((r) => {
-        map[r.name] = r.daily_rate || "";
-      });
-      setRates(map);
     } catch (err) {
       toast.error(formatApiError(err));
     }
@@ -36,18 +32,8 @@ export default function RecapTable({ month, onMonthChange }) {
     fetchRecap();
   }, [fetchRecap]);
 
-  const saveRate = async (name) => {
-    try {
-      await api.put("/rates", { name, daily_rate: Number(rates[name]) || 0 });
-      toast.success(`Tarif gaji ${name} disimpan`);
-      fetchRecap();
-    } catch (err) {
-      toast.error(formatApiError(err));
-    }
-  };
-
   const totalDays = recap.reduce((s, r) => s + r.total_days, 0);
-  const totalSalary = recap.reduce((s, r) => s + r.total_salary, 0);
+  const totalSalary = recap.reduce((s, r) => s + r.total_days * DAILY_RATE, 0);
 
   return (
     <div data-testid="recap-table-section">
@@ -65,7 +51,13 @@ export default function RecapTable({ month, onMonthChange }) {
             className="w-44"
           />
         </div>
-        <div className="flex gap-6 text-sm">
+        <div className="flex flex-wrap gap-6 text-sm">
+          <div data-testid="recap-formula">
+            <span className="text-muted-foreground">Rumus: </span>
+            <span className="font-semibold">
+              {formatRupiah(BASE_SALARY)} ÷ {WORKING_DAYS} hari = {formatRupiah(DAILY_RATE)}/hari
+            </span>
+          </div>
           <div data-testid="recap-total-days">
             <span className="text-muted-foreground">Total Hari Hadir: </span>
             <span className="font-semibold">{totalDays} hari</span>
@@ -82,17 +74,16 @@ export default function RecapTable({ month, onMonthChange }) {
           <TableHeader>
             <TableRow>
               <TableHead>Nama Karyawan</TableHead>
-              <TableHead>Total Hari Hadir</TableHead>
-              <TableHead>Gaji per Hari (Rp)</TableHead>
+              <TableHead>Total Hari Masuk</TableHead>
+              <TableHead>Gaji per Hari</TableHead>
               <TableHead>Total Gaji</TableHead>
-              <TableHead className="text-right">Aksi</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {recap.length === 0 ? (
               <TableRow>
                 <TableCell
-                  colSpan={5}
+                  colSpan={4}
                   className="text-center text-muted-foreground py-10"
                   data-testid="recap-empty-state"
                 >
@@ -104,29 +95,11 @@ export default function RecapTable({ month, onMonthChange }) {
                 <TableRow key={r.name} data-testid={`recap-row-${r.name}`}>
                   <TableCell className="font-medium">{r.name}</TableCell>
                   <TableCell data-testid={`recap-days-${r.name}`}>{r.total_days} hari</TableCell>
-                  <TableCell>
-                    <Input
-                      type="number"
-                      min="0"
-                      data-testid={`recap-rate-input-${r.name}`}
-                      value={rates[r.name] ?? ""}
-                      onChange={(e) => setRates({ ...rates, [r.name]: e.target.value })}
-                      className="w-36"
-                      placeholder="0"
-                    />
+                  <TableCell data-testid={`recap-rate-${r.name}`}>
+                    {formatRupiah(DAILY_RATE)}
                   </TableCell>
                   <TableCell className="font-semibold" data-testid={`recap-salary-${r.name}`}>
-                    {formatRupiah((Number(rates[r.name]) || 0) * r.total_days)}
-                  </TableCell>
-                  <TableCell className="text-right">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      data-testid={`recap-save-rate-${r.name}`}
-                      onClick={() => saveRate(r.name)}
-                    >
-                      <Save className="w-4 h-4 mr-2" strokeWidth={1.5} /> Simpan
-                    </Button>
+                    {formatRupiah(r.total_days * DAILY_RATE)}
                   </TableCell>
                 </TableRow>
               ))

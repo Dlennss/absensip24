@@ -22,7 +22,8 @@ Buatkan sebuah website absensi simple untuk karyawan yang berisi Nama Lengkap, H
 ## Yang Sudah Diimplementasikan (2026-08-30)
 - Halaman karyawan: form nama, tanggal otomatis, upload foto maks 5MB (validasi client + server), anti-duplikat per nama/hari (409).
 - Admin login JWT + dashboard: tabel absensi (thumbnail + preview foto), filter bulan, tambah/edit/hapus (dengan konfirmasi hapus).
-- Rekap & gaji: total hari per karyawan, tarif gaji/hari per karyawan, total gaji otomatis + ringkasan total.
+- Rekap & gaji: total hari per karyawan, total gaji otomatis = Rp4.000.000 ÷ 26 hari × total hari masuk (Rp153.846/hari), ringkasan total keseluruhan dalam Rupiah.
+- Perubahan (2026-08-30): perhitungan gaji diubah dari tarif per karyawan menjadi rumus tetap gaji pokok Rp4.000.000 / 26 × hari masuk; endpoint /api/rates dan input tarif per karyawan dihapus.
 - Hardening: lockout brute-force 429, validasi format bulan, tolak tanggal masa depan, tarif >= 0.
 - Pengujian: backend 51/51 pytest, semua alur UI lulus (iteration_2).
 

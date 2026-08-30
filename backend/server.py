@@ -5,7 +5,7 @@ from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request, UploadF
 from starlette.middleware.cors import CORSMiddleware
 from starlette.staticfiles import StaticFiles
 from motor.motor_asyncio import AsyncIOMotorClient
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 from bson import ObjectId
 from typing import Optional
 from pathlib import Path
@@ -26,6 +26,8 @@ MAX_PHOTO_SIZE = 5 * 1024 * 1024
 ALLOWED_TYPES = {"image/jpeg", "image/png", "image/jpg", "image/webp"}
 JAKARTA_TZ = ZoneInfo("Asia/Jakarta")
 DAY_NAMES_ID = ["Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu", "Minggu"]
+BASE_SALARY = 4_000_000
+WORKING_DAYS = 26
 
 mongo_url = os.environ["MONGO_URL"]
 client = AsyncIOMotorClient(mongo_url, tz_aware=True)
@@ -86,11 +88,6 @@ async def get_current_admin(request: Request) -> dict:
 class LoginInput(BaseModel):
     email: str
     password: str
-
-
-class RateInput(BaseModel):
-    name: str
-    daily_rate: float = Field(ge=0)
 
 
 MONTH_RE = re.compile(r"^\d{4}-\d{2}$")
@@ -286,39 +283,24 @@ async def recap(month: Optional[str] = None, admin=Depends(get_current_admin)):
             raise HTTPException(status_code=400, detail="Format bulan harus YYYY-MM")
         query["date"] = {"$regex": f"^{month}"}
     docs = await db.attendance.find(query).to_list(5000)
-    rates = {r["name_lower"]: r["daily_rate"] async for r in db.rates.find()}
     grouped = {}
     for d in docs:
         key = d["name_lower"]
         if key not in grouped:
             grouped[key] = {"name": d["name"], "total_days": 0}
         grouped[key]["total_days"] += 1
-    result = []
-    for key, g in grouped.items():
-        rate = rates.get(key, 0)
-        result.append(
-            {
-                "name": g["name"],
-                "total_days": g["total_days"],
-                "daily_rate": rate,
-                "total_salary": g["total_days"] * rate,
-            }
-        )
+    daily_rate = BASE_SALARY / WORKING_DAYS
+    result = [
+        {
+            "name": g["name"],
+            "total_days": g["total_days"],
+            "daily_rate": daily_rate,
+            "total_salary": g["total_days"] * daily_rate,
+        }
+        for g in grouped.values()
+    ]
     result.sort(key=lambda x: x["name"].lower())
     return result
-
-
-@api_router.put("/rates")
-async def set_rate(input: RateInput, admin=Depends(get_current_admin)):
-    name = input.name.strip()
-    if not name:
-        raise HTTPException(status_code=400, detail="Nama wajib diisi")
-    await db.rates.update_one(
-        {"name_lower": name.lower()},
-        {"$set": {"name": name, "name_lower": name.lower(), "daily_rate": input.daily_rate}},
-        upsert=True,
-    )
-    return {"message": "Tarif gaji per hari berhasil disimpan"}
 
 
 async def seed_admin():
