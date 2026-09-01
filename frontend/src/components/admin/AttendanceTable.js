@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { toast } from "sonner";
 import { ImageIcon, Pencil, Plus, Trash2 } from "lucide-react";
-import api, { formatApiError, formatTanggal } from "@/lib/api";
+import api, { API_BASE, formatApiError, formatTanggal } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -32,7 +32,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 
-const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
+const BACKEND_URL = API_BASE;
 
 export default function AttendanceTable({ attendance, month, onMonthChange, onRefresh }) {
   const [photoPreview, setPhotoPreview] = useState(null);

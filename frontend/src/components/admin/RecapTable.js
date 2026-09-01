@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { toast } from "sonner";
 import { Eye, ImageOff } from "lucide-react";
-import api, { formatApiError, formatRupiah } from "@/lib/api";
+import api, { API_BASE, formatApiError, formatRupiah } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -21,7 +21,7 @@ import {
 const BASE_SALARY = 4000000;
 const WORKING_DAYS = 26;
 const DAILY_RATE = BASE_SALARY / WORKING_DAYS;
-const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
+const BACKEND_URL = API_BASE;
 
 export default function RecapTable({ month, onMonthChange }) {
   const [recap, setRecap] = useState([]);

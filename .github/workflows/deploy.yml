@@ -25,7 +25,6 @@ jobs:
         working-directory: frontend
         env:
           CI: false
-          REACT_APP_BACKEND_URL: http://${{ secrets.SERVER_HOST }}:8100
         run: |
           npm ci
           npm run build
@@ -37,10 +36,9 @@ jobs:
           username: ${{ secrets.SERVER_USER }}
           password: ${{ secrets.SERVER_PASSWORD }}
           port: ${{ secrets.SERVER_PORT }}
-          source: "backend,backend/requirements.txt"
+          source: "backend/*"
           target: ${{ secrets.BACKEND_SOURCE_DIR }}
           strip_components: 1
-          rm: true
 
       - name: Upload frontend build
         uses: appleboy/scp-action@v0.1.7
