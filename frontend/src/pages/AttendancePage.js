@@ -36,15 +36,16 @@ export default function AttendancePage() {
       .slice(0, 8);
   }, [marketing, normalizedName]);
 
+  const fetchMarketing = async () => {
+    try {
+      const { data } = await axios.get(`${API}/marketing/available`);
+      setMarketing(data);
+    } catch {
+      toast.error("Daftar marketing belum bisa dimuat");
+    }
+  };
+
   useEffect(() => {
-    const fetchMarketing = async () => {
-      try {
-        const { data } = await axios.get(`${API}/marketing`);
-        setMarketing(data);
-      } catch {
-        toast.error("Daftar marketing belum bisa dimuat");
-      }
-    };
     fetchMarketing();
   }, []);
 
@@ -89,6 +90,7 @@ export default function AttendancePage() {
       setName("");
       setPhoto(null);
       setPreview(null);
+      fetchMarketing();
       if (fileRef.current) fileRef.current.value = "";
     } catch (err) {
       toast.error(formatApiError(err));

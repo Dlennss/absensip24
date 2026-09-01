@@ -191,6 +191,19 @@ async def list_marketing_public(q: Optional[str] = None):
     return [serialize_marketing(d) for d in docs]
 
 
+@api_router.get("/marketing/available")
+async def list_available_marketing(q: Optional[str] = None):
+    today = today_jakarta().isoformat()
+    attended_names = await db.attendance.distinct("name_lower", {"date": today})
+    query = {"name_lower": {"$nin": attended_names}}
+    if q:
+        q = q.strip().lower()
+        if q:
+            query["name_lower"]["$regex"] = re.escape(q)
+    docs = await db.marketing.find(query).sort("name", 1).to_list(1000)
+    return [serialize_marketing(d) for d in docs]
+
+
 @api_router.post("/marketing", status_code=201)
 async def create_marketing(input: MarketingInput, admin=Depends(get_current_admin)):
     name = input.name.strip()

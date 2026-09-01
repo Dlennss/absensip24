@@ -1,13 +1,16 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { toast } from "sonner";
-import { Eye, ImageOff } from "lucide-react";
-import api, { API_BASE, formatApiError, formatRupiah } from "@/lib/api";
+import { Download, Eye, ImageOff, Printer, Search } from "lucide-react";
+import api, { API_BASE, formatApiError, formatRupiah, formatTanggal } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
 } from "@/components/ui/dialog";
 import {
   Table,
@@ -23,10 +26,84 @@ const WORKING_DAYS = 26;
 const DAILY_RATE = BASE_SALARY / WORKING_DAYS;
 const BACKEND_URL = API_BASE;
 
+function monthLabel(month) {
+  const [year, monthNumber] = month.split("-");
+  return new Date(Number(year), Number(monthNumber) - 1, 1).toLocaleDateString("id-ID", {
+    month: "long",
+    year: "numeric",
+  });
+}
+
+function photoUrl(path) {
+  return path ? `${BACKEND_URL}${path}` : "";
+}
+
+function downloadCsv(filename, rows) {
+  const csv = rows
+    .map((row) => row.map((cell) => `"${String(cell ?? "").replaceAll('"', '""')}"`).join(","))
+    .join("\n");
+  const blob = new Blob(["\ufeff", csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+}
+
+function printMonthlyReport(title, records) {
+  const rows = records
+    .map(
+      (item, index) => `
+        <tr>
+          <td>${index + 1}</td>
+          <td>${formatTanggal(item.date)}</td>
+          <td>${item.day_name}</td>
+          <td>${item.photo_url ? `<img src="${photoUrl(item.photo_url)}" alt="" />` : "Tidak ada foto"}</td>
+        </tr>
+      `
+    )
+    .join("");
+  const printWindow = window.open("", "_blank", "width=1000,height=700");
+  if (!printWindow) return;
+  printWindow.document.write(`
+    <html>
+      <head>
+        <title>${title}</title>
+        <style>
+          body { font-family: Arial, sans-serif; margin: 24px; color: #0f172a; }
+          h1 { font-size: 22px; margin: 0 0 8px; }
+          p { margin: 0 0 20px; color: #475569; }
+          table { border-collapse: collapse; width: 100%; }
+          th, td { border: 1px solid #cbd5e1; padding: 10px; text-align: left; vertical-align: top; }
+          th { background: #f8fafc; }
+          img { max-width: 180px; max-height: 180px; object-fit: contain; }
+        </style>
+      </head>
+      <body>
+        <h1>${title}</h1>
+        <p>Total hadir: ${records.length} hari - Total gaji: ${formatRupiah(records.length * DAILY_RATE)}</p>
+        <table>
+          <thead>
+            <tr><th>No</th><th>Tanggal</th><th>Hari</th><th>Foto</th></tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </body>
+    </html>
+  `);
+  printWindow.document.close();
+  printWindow.focus();
+  printWindow.print();
+}
+
 export default function RecapTable({ month, onMonthChange }) {
   const [recap, setRecap] = useState([]);
   const [attendance, setAttendance] = useState([]);
-  const [photoPreview, setPhotoPreview] = useState(null);
+  const [search, setSearch] = useState("");
+  const [selectedRecap, setSelectedRecap] = useState(null);
 
   const fetchRecap = useCallback(async () => {
     try {
@@ -45,22 +122,50 @@ export default function RecapTable({ month, onMonthChange }) {
     fetchRecap();
   }, [fetchRecap]);
 
-  const totalDays = recap.reduce((s, r) => s + r.total_days, 0);
-  const totalSalary = recap.reduce((s, r) => s + r.total_days * DAILY_RATE, 0);
-  const latestPhotoByName = attendance.reduce((map, item) => {
-    if (!item.photo_url) return map;
-    const key = item.name.toLowerCase();
-    if (!map[key] || item.date > map[key].date) {
-      map[key] = item;
-    }
-    return map;
-  }, {});
+  const attendanceByName = useMemo(
+    () => {
+      const map = attendance.reduce((acc, item) => {
+        const key = item.name.toLowerCase();
+        if (!acc[key]) acc[key] = [];
+        acc[key].push(item);
+        return acc;
+      }, {});
+      Object.values(map).forEach((records) => records.sort((a, b) => a.date.localeCompare(b.date)));
+      return map;
+    },
+    [attendance]
+  );
+
+  const filteredRecap = useMemo(() => {
+    const keyword = search.trim().toLowerCase();
+    if (!keyword) return recap;
+    return recap.filter((item) => item.name.toLowerCase().includes(keyword));
+  }, [recap, search]);
+
+  const selectedRecords = selectedRecap ? attendanceByName[selectedRecap.name.toLowerCase()] || [] : [];
+  const selectedTitle = selectedRecap
+    ? `Rekap ${selectedRecap.name} - ${monthLabel(month)}`
+    : `Rekap ${monthLabel(month)}`;
+
+  const exportRecords = (records, filenameName = "semua-marketing") => {
+    const rows = [
+      ["Nama Marketing", "Tanggal", "Hari", "Foto", "Gaji per Hari"],
+      ...records.map((item) => [
+        item.name,
+        formatTanggal(item.date),
+        item.day_name,
+        photoUrl(item.photo_url),
+        Math.round(DAILY_RATE),
+      ]),
+    ];
+    downloadCsv(`rekap-${filenameName}-${month}.csv`, rows);
+  };
 
   return (
     <div data-testid="recap-table-section">
-      <div className="mb-6 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
-          <Label htmlFor="recap-month" className="whitespace-nowrap text-sm font-bold text-slate-900">
+      <div className="mb-6 grid gap-4 lg:grid-cols-[220px_minmax(240px,1fr)_auto] lg:items-end">
+        <div className="space-y-2">
+          <Label htmlFor="recap-month" className="text-sm font-bold text-slate-900">
             Bulan
           </Label>
           <Input
@@ -69,32 +174,51 @@ export default function RecapTable({ month, onMonthChange }) {
             data-testid="recap-month-input"
             value={month}
             onChange={(e) => onMonthChange(e.target.value)}
-            className="h-10 rounded-lg border-slate-200 bg-white shadow-none sm:w-44"
+            className="h-10 rounded-lg border-slate-200 bg-white shadow-none"
           />
         </div>
-        <div className="grid gap-3 text-sm sm:grid-cols-3 lg:min-w-[720px]">
-          <div className="rounded-lg border border-slate-200 bg-slate-50 p-4" data-testid="recap-formula">
-            <span className="block text-xs font-medium text-slate-500">Rumus</span>
-            <span className="mt-1 block font-bold leading-6 text-slate-900">
-              {formatRupiah(BASE_SALARY)} ÷ {WORKING_DAYS} hari = {formatRupiah(DAILY_RATE)}/hari
-            </span>
-          </div>
-          <div className="rounded-lg border border-slate-200 bg-slate-50 p-4" data-testid="recap-total-days">
-            <span className="block text-xs font-medium text-slate-500">Total Hari Hadir</span>
-            <span className="mt-1 block text-xl font-extrabold text-slate-950">{totalDays} hari</span>
-          </div>
-          <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4" data-testid="recap-total-salary">
-            <span className="block text-xs font-medium text-emerald-700">Total Gaji</span>
-            <span className="mt-1 block text-xl font-extrabold text-emerald-800">{formatRupiah(totalSalary)}</span>
+        <div className="space-y-2">
+          <Label htmlFor="recap-search" className="text-sm font-bold text-slate-900">
+            Cari Marketing
+          </Label>
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" strokeWidth={1.7} />
+            <Input
+              id="recap-search"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Cari nama marketing"
+              className="h-10 rounded-lg border-slate-200 bg-white pl-9 shadow-none"
+              data-testid="recap-search-input"
+            />
           </div>
         </div>
+        <div className="flex flex-wrap gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => exportRecords(attendance, "semua-marketing")}
+            className="h-10 rounded-lg border-slate-200 bg-white font-bold"
+            data-testid="recap-export-all-button"
+          >
+            <Download className="h-4 w-4" strokeWidth={1.7} />
+            Excel
+          </Button>
+        </div>
+      </div>
+
+      <div className="mb-5 rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm" data-testid="recap-formula">
+        <span className="block text-xs font-medium text-slate-500">Rumus</span>
+        <span className="mt-1 block font-bold leading-6 text-slate-900">
+          {formatRupiah(BASE_SALARY)} / {WORKING_DAYS} hari = {formatRupiah(DAILY_RATE)}/hari
+        </span>
       </div>
 
       <div className="overflow-hidden rounded-lg border border-slate-200 bg-white">
         <Table className="min-w-[780px]" data-testid="recap-table">
           <TableHeader>
             <TableRow className="bg-slate-50 hover:bg-slate-50">
-              <TableHead>Nama Karyawan</TableHead>
+              <TableHead>Nama Marketing</TableHead>
               <TableHead>Total Hari Masuk</TableHead>
               <TableHead>Gaji per Hari</TableHead>
               <TableHead>Total Gaji</TableHead>
@@ -102,64 +226,113 @@ export default function RecapTable({ month, onMonthChange }) {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {recap.length === 0 ? (
+            {filteredRecap.length === 0 ? (
               <TableRow>
                 <TableCell
                   colSpan={5}
                   className="py-12 text-center text-slate-500"
                   data-testid="recap-empty-state"
                 >
-                  Belum ada data absensi pada bulan ini.
+                  Tidak ada rekap yang cocok.
                 </TableCell>
               </TableRow>
             ) : (
-              recap.map((r) => (
-                <TableRow className="hover:bg-emerald-50/40" key={r.name} data-testid={`recap-row-${r.name}`}>
-                  <TableCell className="font-bold text-slate-900">{r.name}</TableCell>
-                  <TableCell className="text-slate-600" data-testid={`recap-days-${r.name}`}>{r.total_days} hari</TableCell>
-                  <TableCell className="text-slate-600" data-testid={`recap-rate-${r.name}`}>
-                    {formatRupiah(DAILY_RATE)}
-                  </TableCell>
-                  <TableCell className="font-extrabold text-emerald-700" data-testid={`recap-salary-${r.name}`}>
-                    {formatRupiah(r.total_days * DAILY_RATE)}
-                  </TableCell>
-                  <TableCell className="text-right">
-                    {latestPhotoByName[r.name.toLowerCase()] ? (
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="outline"
-                        onClick={() => setPhotoPreview(latestPhotoByName[r.name.toLowerCase()])}
-                        className="rounded-lg border-slate-200 bg-white font-bold text-slate-700 hover:bg-emerald-50 hover:text-emerald-700"
-                        data-testid={`recap-view-photo-button-${r.name}`}
-                      >
-                        <Eye className="h-4 w-4" strokeWidth={1.7} />
-                        Lihat Foto
-                      </Button>
-                    ) : (
-                      <span className="inline-flex h-9 items-center gap-2 rounded-lg border border-slate-200 px-3 text-xs font-semibold text-slate-400">
-                        <ImageOff className="h-4 w-4" strokeWidth={1.7} />
-                        Tidak ada foto
-                      </span>
-                    )}
-                  </TableCell>
-                </TableRow>
-              ))
+              filteredRecap.map((r) => {
+                const records = attendanceByName[r.name.toLowerCase()] || [];
+                return (
+                  <TableRow className="hover:bg-emerald-50/40" key={r.name} data-testid={`recap-row-${r.name}`}>
+                    <TableCell className="font-bold text-slate-900">{r.name}</TableCell>
+                    <TableCell className="text-slate-600" data-testid={`recap-days-${r.name}`}>
+                      {r.total_days} hari
+                    </TableCell>
+                    <TableCell className="text-slate-600" data-testid={`recap-rate-${r.name}`}>
+                      {formatRupiah(DAILY_RATE)}
+                    </TableCell>
+                    <TableCell className="font-extrabold text-emerald-700" data-testid={`recap-salary-${r.name}`}>
+                      {formatRupiah(r.total_days * DAILY_RATE)}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      {records.length > 0 ? (
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          onClick={() => setSelectedRecap(r)}
+                          className="rounded-lg border-slate-200 bg-white font-bold text-slate-700 hover:bg-emerald-50 hover:text-emerald-700"
+                          data-testid={`recap-view-monthly-button-${r.name}`}
+                        >
+                          <Eye className="h-4 w-4" strokeWidth={1.7} />
+                          Rekap Bulanan
+                        </Button>
+                      ) : (
+                        <span className="inline-flex h-9 items-center gap-2 rounded-lg border border-slate-200 px-3 text-xs font-semibold text-slate-400">
+                          <ImageOff className="h-4 w-4" strokeWidth={1.7} />
+                          Tidak ada foto
+                        </span>
+                      )}
+                    </TableCell>
+                  </TableRow>
+                );
+              })
             )}
           </TableBody>
         </Table>
       </div>
 
-      <Dialog open={!!photoPreview} onOpenChange={() => setPhotoPreview(null)}>
-        <DialogContent className="max-w-3xl rounded-lg border-slate-200 p-3 sm:p-4" data-testid="recap-photo-preview-dialog">
-          {photoPreview?.photo_url && (
-            <img
-              src={`${BACKEND_URL}${photoPreview.photo_url}`}
-              alt=""
-              className="max-h-[82vh] w-full rounded-md object-contain"
-              data-testid="recap-photo-preview-image"
-            />
-          )}
+      <Dialog open={!!selectedRecap} onOpenChange={() => setSelectedRecap(null)}>
+        <DialogContent className="max-h-[90vh] max-w-5xl overflow-y-auto rounded-lg border-slate-200" data-testid="monthly-recap-dialog">
+          <DialogHeader>
+            <DialogTitle>{selectedTitle}</DialogTitle>
+            <DialogDescription>
+              {selectedRecords.length} hari hadir, total gaji {formatRupiah(selectedRecords.length * DAILY_RATE)}.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="flex flex-wrap gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => exportRecords(selectedRecords, selectedRecap?.name?.toLowerCase().replaceAll(" ", "-"))}
+              className="rounded-lg border-slate-200 bg-white font-bold"
+              data-testid="monthly-export-button"
+            >
+              <Download className="h-4 w-4" strokeWidth={1.7} />
+              Excel
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => printMonthlyReport(selectedTitle, selectedRecords)}
+              className="rounded-lg border-slate-200 bg-white font-bold"
+              data-testid="monthly-print-button"
+            >
+              <Printer className="h-4 w-4" strokeWidth={1.7} />
+              Print / PDF
+            </Button>
+          </div>
+
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {selectedRecords.map((item) => (
+              <article key={item.id} className="overflow-hidden rounded-lg border border-slate-200 bg-white">
+                <div className="border-b border-slate-100 px-4 py-3">
+                  <p className="font-bold text-slate-900">{formatTanggal(item.date)}</p>
+                  <p className="text-sm text-slate-500">{item.day_name}</p>
+                </div>
+                {item.photo_url ? (
+                  <img
+                    src={photoUrl(item.photo_url)}
+                    alt={`Foto absensi ${item.name} ${formatTanggal(item.date)}`}
+                    className="h-64 w-full bg-slate-50 object-contain"
+                    data-testid={`monthly-photo-${item.id}`}
+                  />
+                ) : (
+                  <div className="flex h-64 items-center justify-center bg-slate-50 text-sm font-semibold text-slate-400">
+                    Tidak ada foto
+                  </div>
+                )}
+              </article>
+            ))}
+          </div>
         </DialogContent>
       </Dialog>
     </div>
