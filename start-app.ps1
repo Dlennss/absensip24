@@ -37,4 +37,4 @@ if (-not (Test-PortOpen 3100)) {
 Write-Host "MongoDB : mongodb://localhost:27018"
 Write-Host "Backend : http://localhost:8100"
 Write-Host "Frontend: http://localhost:3100"
-Write-Host "Login admin: admin@local.test / admin123"
+Write-Host "Login admin: admin@gmail.com / adminp24"
