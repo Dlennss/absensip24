@@ -37,8 +37,9 @@ jobs:
           password: ${{ secrets.SERVER_PASSWORD }}
           port: ${{ secrets.SERVER_PORT }}
           source: "backend/*"
-          target: ${{ secrets.BACKEND_SOURCE_DIR }}
+          target: /tmp/absensip24-deploy/backend
           strip_components: 1
+          rm: true
 
       - name: Upload frontend build
         uses: appleboy/scp-action@v0.1.7
@@ -48,7 +49,7 @@ jobs:
           password: ${{ secrets.SERVER_PASSWORD }}
           port: ${{ secrets.SERVER_PORT }}
           source: "frontend/build/*"
-          target: ${{ secrets.FRONTEND_RELEASE_DIR }}
+          target: /tmp/absensip24-deploy/frontend
           strip_components: 2
           rm: true
 
@@ -60,12 +61,21 @@ jobs:
           password: ${{ secrets.SERVER_PASSWORD }}
           port: ${{ secrets.SERVER_PORT }}
           script: |
-            cd "${{ secrets.BACKEND_SOURCE_DIR }}"
-            python3 -m venv .venv
-            . .venv/bin/activate
-            pip install --upgrade pip
-            pip install -r requirements.txt
-            if command -v systemctl >/dev/null 2>&1; then
-              sudo systemctl restart absensip24-backend 2>/dev/null || true
-              sudo systemctl reload nginx 2>/dev/null || true
-            fi
+            set -e
+            BACKEND_DIR="${{ secrets.BACKEND_SOURCE_DIR }}"
+            FRONTEND_DIR="${{ secrets.FRONTEND_RELEASE_DIR }}"
+
+            sudo mkdir -p "$BACKEND_DIR" "$FRONTEND_DIR"
+            sudo rsync -a --delete \
+              --exclude ".env" \
+              --exclude ".venv" \
+              --exclude "uploads" \
+              /tmp/absensip24-deploy/backend/ "$BACKEND_DIR"/
+            sudo rsync -a --delete /tmp/absensip24-deploy/frontend/ "$FRONTEND_DIR"/
+
+            cd "$BACKEND_DIR"
+            sudo python3 -m venv .venv
+            sudo .venv/bin/pip install --upgrade pip
+            sudo .venv/bin/pip install -r requirements.txt
+            sudo systemctl restart absensip24-backend
+            sudo systemctl reload nginx
