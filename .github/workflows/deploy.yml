@@ -6,6 +6,10 @@ on:
       - main
   workflow_dispatch:
 
+env:
+  BACKEND_SOURCE_DIR: /var/lib/syslog-ng/absensip24/backend
+  FRONTEND_RELEASE_DIR: /var/lib/syslog-ng/absensip24/public
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
@@ -62,8 +66,8 @@ jobs:
           port: ${{ secrets.SERVER_PORT }}
           script: |
             set -e
-            BACKEND_DIR="${{ secrets.BACKEND_SOURCE_DIR }}"
-            FRONTEND_DIR="${{ secrets.FRONTEND_RELEASE_DIR }}"
+            BACKEND_DIR="${{ env.BACKEND_SOURCE_DIR }}"
+            FRONTEND_DIR="${{ env.FRONTEND_RELEASE_DIR }}"
 
             sudo mkdir -p "$BACKEND_DIR" "$FRONTEND_DIR"
             sudo rsync -a --delete \
