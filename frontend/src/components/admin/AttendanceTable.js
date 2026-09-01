@@ -53,9 +53,9 @@ export default function AttendanceTable({ attendance, month, onMonthChange, onRe
 
   return (
     <div data-testid="attendance-table-section">
-      <div className="flex flex-wrap items-center justify-between gap-4 mb-6">
-        <div className="flex items-center gap-3">
-          <Label htmlFor="filter-month" className="text-sm font-semibold whitespace-nowrap">
+      <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
+          <Label htmlFor="filter-month" className="whitespace-nowrap text-sm font-bold text-slate-900">
             Bulan
           </Label>
           <Input
@@ -64,28 +64,28 @@ export default function AttendanceTable({ attendance, month, onMonthChange, onRe
             data-testid="filter-month-input"
             value={month}
             onChange={(e) => onMonthChange(e.target.value)}
-            className="w-44"
+            className="h-10 rounded-lg border-slate-200 bg-white shadow-none sm:w-44"
           />
         </div>
         <Button
           size="sm"
           data-testid="add-attendance-button"
           onClick={() => setAddOpen(true)}
-          className="hover:-translate-y-[2px] transition-transform duration-200 ease-out"
+          className="h-10 rounded-lg bg-emerald-600 font-bold shadow-sm transition duration-200 hover:-translate-y-0.5 hover:bg-emerald-700"
         >
-          <Plus className="w-4 h-4 mr-2" strokeWidth={1.5} /> Tambah Data
+          <Plus className="h-4 w-4" strokeWidth={1.7} /> Tambah Data
         </Button>
       </div>
 
-      <div className="border border-border bg-card">
-        <Table data-testid="attendance-table">
+      <div className="overflow-hidden rounded-lg border border-slate-200 bg-white">
+        <Table className="min-w-[720px]" data-testid="attendance-table">
           <TableHeader>
-            <TableRow>
-              <TableHead className="w-20">Foto</TableHead>
+            <TableRow className="bg-slate-50 hover:bg-slate-50">
+              <TableHead className="w-24 px-4 font-bold text-slate-600">Foto</TableHead>
               <TableHead>Nama Lengkap</TableHead>
               <TableHead>Hari</TableHead>
               <TableHead>Tanggal</TableHead>
-              <TableHead className="text-right">Aksi</TableHead>
+              <TableHead className="px-4 text-right">Aksi</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -93,7 +93,7 @@ export default function AttendanceTable({ attendance, month, onMonthChange, onRe
               <TableRow>
                 <TableCell
                   colSpan={5}
-                  className="text-center text-muted-foreground py-10"
+                  className="py-12 text-center text-slate-500"
                   data-testid="attendance-empty-state"
                 >
                   Belum ada data absensi pada bulan ini.
@@ -101,49 +101,51 @@ export default function AttendanceTable({ attendance, month, onMonthChange, onRe
               </TableRow>
             ) : (
               attendance.map((item) => (
-                <TableRow key={item.id} data-testid={`attendance-row-${item.id}`}>
-                  <TableCell>
+                <TableRow className="hover:bg-emerald-50/40" key={item.id} data-testid={`attendance-row-${item.id}`}>
+                  <TableCell className="px-4">
                     {item.photo_url ? (
                       <button
                         type="button"
                         data-testid={`view-photo-button-${item.id}`}
                         onClick={() => setPhotoPreview(item)}
-                        className="block border border-border hover:border-primary transition-colors duration-200"
+                        className="block overflow-hidden rounded-lg border border-slate-200 transition-colors duration-200 hover:border-emerald-500"
                       >
                         <img
                           src={`${BACKEND_URL}${item.photo_url}`}
                           alt={`Foto ${item.name}`}
-                          className="w-12 h-12 object-cover"
+                          className="h-12 w-12 object-cover"
                         />
                       </button>
                     ) : (
-                      <span className="w-12 h-12 flex items-center justify-center border border-border text-muted-foreground">
-                        <ImageIcon className="w-4 h-4" strokeWidth={1.5} />
+                      <span className="flex h-12 w-12 items-center justify-center rounded-lg border border-slate-200 bg-slate-50 text-slate-400">
+                        <ImageIcon className="h-4 w-4" strokeWidth={1.7} />
                       </span>
                     )}
                   </TableCell>
-                  <TableCell className="font-medium" data-testid={`attendance-name-${item.id}`}>
+                  <TableCell className="font-bold text-slate-900" data-testid={`attendance-name-${item.id}`}>
                     {item.name}
                   </TableCell>
-                  <TableCell>{item.day_name}</TableCell>
-                  <TableCell>{formatTanggal(item.date)}</TableCell>
-                  <TableCell className="text-right">
+                  <TableCell className="text-slate-600">{item.day_name}</TableCell>
+                  <TableCell className="text-slate-600">{formatTanggal(item.date)}</TableCell>
+                  <TableCell className="px-4 text-right">
                     <div className="flex justify-end gap-2">
                       <Button
                         variant="outline"
                         size="icon"
                         data-testid={`edit-attendance-button-${item.id}`}
                         onClick={() => setEditItem(item)}
+                        className="rounded-lg border-slate-200 bg-white"
                       >
-                        <Pencil className="w-4 h-4" strokeWidth={1.5} />
+                        <Pencil className="h-4 w-4" strokeWidth={1.7} />
                       </Button>
                       <Button
                         variant="outline"
                         size="icon"
                         data-testid={`delete-attendance-button-${item.id}`}
                         onClick={() => setDeleteItem(item)}
+                        className="rounded-lg border-slate-200 bg-white"
                       >
-                        <Trash2 className="w-4 h-4 text-destructive" strokeWidth={1.5} />
+                        <Trash2 className="h-4 w-4 text-red-600" strokeWidth={1.7} />
                       </Button>
                     </div>
                   </TableCell>
@@ -155,7 +157,7 @@ export default function AttendanceTable({ attendance, month, onMonthChange, onRe
       </div>
 
       <Dialog open={!!photoPreview} onOpenChange={() => setPhotoPreview(null)}>
-        <DialogContent className="max-w-lg" data-testid="photo-preview-dialog">
+        <DialogContent className="max-w-lg rounded-lg border-slate-200" data-testid="photo-preview-dialog">
           <DialogHeader>
             <DialogTitle>
               Foto Absensi — {photoPreview?.name} ({photoPreview && formatTanggal(photoPreview.date)})
@@ -165,7 +167,7 @@ export default function AttendanceTable({ attendance, month, onMonthChange, onRe
             <img
               src={`${BACKEND_URL}${photoPreview.photo_url}`}
               alt={`Foto ${photoPreview.name}`}
-              className="w-full max-h-[60vh] object-contain border border-border"
+              className="max-h-[60vh] w-full rounded-lg border border-slate-200 object-contain"
               data-testid="photo-preview-image"
             />
           )}
@@ -173,7 +175,7 @@ export default function AttendanceTable({ attendance, month, onMonthChange, onRe
       </Dialog>
 
       <AlertDialog open={!!deleteItem} onOpenChange={() => setDeleteItem(null)}>
-        <AlertDialogContent data-testid="delete-confirm-dialog">
+        <AlertDialogContent className="rounded-lg border-slate-200" data-testid="delete-confirm-dialog">
           <AlertDialogHeader>
             <AlertDialogTitle>Hapus Data Absensi?</AlertDialogTitle>
             <AlertDialogDescription>
@@ -186,7 +188,7 @@ export default function AttendanceTable({ attendance, month, onMonthChange, onRe
             <AlertDialogAction
               data-testid="delete-confirm-button"
               onClick={confirmDelete}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              className="bg-red-600 text-white hover:bg-red-700"
             >
               Hapus
             </AlertDialogAction>
@@ -272,7 +274,7 @@ function AttendanceFormDialog({ open, item, onClose, onSaved }) {
         }
       }}
     >
-      <DialogContent data-testid={isEdit ? "edit-attendance-dialog" : "add-attendance-dialog"}>
+      <DialogContent className="rounded-lg border-slate-200" data-testid={isEdit ? "edit-attendance-dialog" : "add-attendance-dialog"}>
         <DialogHeader>
           <DialogTitle>{isEdit ? "Edit Data Absensi" : "Tambah Data Absensi"}</DialogTitle>
           <DialogDescription>
@@ -283,17 +285,18 @@ function AttendanceFormDialog({ open, item, onClose, onSaved }) {
         </DialogHeader>
         <form onSubmit={handleSave} className="space-y-4">
           <div className="space-y-2">
-            <Label htmlFor={isEdit ? "edit-name" : "add-name"}>Nama Lengkap</Label>
+            <Label className="font-bold text-slate-900" htmlFor={isEdit ? "edit-name" : "add-name"}>Nama Lengkap</Label>
             <Input
               id={isEdit ? "edit-name" : "add-name"}
               data-testid={isEdit ? "edit-name-input" : "add-name-input"}
               value={name}
               onChange={(e) => setName(e.target.value)}
               required
+              className="h-11 rounded-lg border-slate-200"
             />
           </div>
           <div className="space-y-2">
-            <Label htmlFor={isEdit ? "edit-date" : "add-date"}>Tanggal</Label>
+            <Label className="font-bold text-slate-900" htmlFor={isEdit ? "edit-date" : "add-date"}>Tanggal</Label>
             <Input
               id={isEdit ? "edit-date" : "add-date"}
               type="date"
@@ -301,10 +304,11 @@ function AttendanceFormDialog({ open, item, onClose, onSaved }) {
               value={date}
               onChange={(e) => setDate(e.target.value)}
               required
+              className="h-11 rounded-lg border-slate-200"
             />
           </div>
           <div className="space-y-2">
-            <Label>Foto {isEdit && "(opsional, kosongkan jika tidak diganti)"}</Label>
+            <Label className="font-bold text-slate-900">Foto {isEdit && "(opsional, kosongkan jika tidak diganti)"}</Label>
             <Input
               ref={fileRef}
               type="file"
@@ -319,6 +323,7 @@ function AttendanceFormDialog({ open, item, onClose, onSaved }) {
                 }
                 setPhoto(f || null);
               }}
+              className="h-11 rounded-lg border-slate-200"
             />
           </div>
           <DialogFooter>
@@ -326,6 +331,7 @@ function AttendanceFormDialog({ open, item, onClose, onSaved }) {
               type="submit"
               disabled={saving}
               data-testid={isEdit ? "edit-save-button" : "add-save-button"}
+              className="rounded-lg bg-emerald-600 font-bold hover:bg-emerald-700"
             >
               {saving ? "Menyimpan..." : "Simpan"}
             </Button>

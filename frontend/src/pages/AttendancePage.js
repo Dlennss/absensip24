@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useEffect, useMemo, useState, useRef } from "react";
 import axios from "axios";
 import { toast } from "sonner";
 import { Camera, CalendarDays, ClipboardCheck, User } from "lucide-react";
@@ -11,6 +11,7 @@ const MAX_SIZE = 5 * 1024 * 1024;
 
 export default function AttendancePage() {
   const [name, setName] = useState("");
+  const [marketing, setMarketing] = useState([]);
   const [photo, setPhoto] = useState(null);
   const [preview, setPreview] = useState(null);
   const [submitting, setSubmitting] = useState(false);
@@ -23,6 +24,29 @@ export default function AttendancePage() {
     month: "long",
     year: "numeric",
   });
+  const normalizedName = name.trim().toLowerCase();
+  const matchedMarketing = useMemo(
+    () => marketing.find((item) => item.name.toLowerCase() === normalizedName),
+    [marketing, normalizedName]
+  );
+  const filteredMarketing = useMemo(() => {
+    if (!normalizedName) return marketing.slice(0, 8);
+    return marketing
+      .filter((item) => item.name.toLowerCase().includes(normalizedName))
+      .slice(0, 8);
+  }, [marketing, normalizedName]);
+
+  useEffect(() => {
+    const fetchMarketing = async () => {
+      try {
+        const { data } = await axios.get(`${API}/marketing`);
+        setMarketing(data);
+      } catch {
+        toast.error("Daftar marketing belum bisa dimuat");
+      }
+    };
+    fetchMarketing();
+  }, []);
 
   const handlePhoto = (e) => {
     const file = e.target.files?.[0];
@@ -47,6 +71,10 @@ export default function AttendancePage() {
       toast.error("Nama lengkap wajib diisi");
       return;
     }
+    if (!matchedMarketing) {
+      toast.error("Nama marketing tidak terdaftar");
+      return;
+    }
     if (!photo) {
       toast.error("Foto absensi wajib diunggah");
       return;
@@ -54,7 +82,7 @@ export default function AttendancePage() {
     setSubmitting(true);
     try {
       const formData = new FormData();
-      formData.append("name", name.trim());
+      formData.append("name", matchedMarketing.name);
       formData.append("photo", photo);
       await axios.post(`${API}/attendance`, formData);
       toast.success("Absensi berhasil dikirim. Terima kasih!");
@@ -70,45 +98,67 @@ export default function AttendancePage() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center px-4 py-20">
-      <div className="w-full max-w-md" data-testid="attendance-page">
-        <div className="mb-8">
-          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-primary mb-2">
-            Sistem Absensi
-          </p>
-          <h1 className="text-4xl font-extrabold tracking-tight" data-testid="attendance-title">
-            Absensi Karyawan
-          </h1>
-          <p className="text-base text-muted-foreground mt-3">
-            Isi nama lengkap dan unggah foto Anda untuk mencatat kehadiran hari ini.
-          </p>
-        </div>
+    <div className="min-h-screen bg-[linear-gradient(135deg,#f8fafc_0%,#eef6f4_55%,#fff7ed_100%)] px-4 py-6 sm:px-6 lg:px-8">
+      <main className="mx-auto flex min-h-[calc(100vh-3rem)] w-full max-w-xl items-center justify-center" data-testid="attendance-page">
+        <section className="w-full">
+          <form
+            onSubmit={handleSubmit}
+            className="mx-auto w-full max-w-xl rounded-lg border border-white/80 bg-white/90 p-5 shadow-2xl shadow-slate-900/10 backdrop-blur sm:p-7 lg:p-8"
+            data-testid="attendance-form"
+          >
+          <div className="mb-6 border-b border-slate-200 pb-5">
+            <p className="text-sm font-semibold text-emerald-700">Form Absensi Hari Ini</p>
+            <p className="mt-1 text-sm text-slate-500">{tanggalLabel}</p>
+          </div>
 
-        <form
-          onSubmit={handleSubmit}
-          className="bg-card border border-border p-8 space-y-6"
-          data-testid="attendance-form"
-        >
+          <div className="space-y-6">
           <div className="space-y-2">
-            <Label htmlFor="name" className="text-sm font-semibold flex items-center gap-2">
-              <User className="w-4 h-4" strokeWidth={1.5} /> Nama Lengkap
+            <Label htmlFor="name" className="flex items-center gap-2 text-sm font-bold text-slate-900">
+              <User className="h-4 w-4 text-emerald-700" strokeWidth={1.7} /> Nama Lengkap
             </Label>
-            <Input
-              id="name"
-              data-testid="attendance-name-input"
-              placeholder="Masukkan nama lengkap"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              className="focus:ring-2 focus:ring-primary focus:ring-offset-2"
-            />
+            <div className="relative">
+              <Input
+                id="name"
+                data-testid="attendance-name-input"
+                placeholder="Cari nama marketing"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                autoComplete="off"
+                className="h-12 rounded-lg border-slate-200 bg-white px-4 shadow-none focus-visible:ring-2 focus-visible:ring-emerald-500"
+              />
+              {name && !matchedMarketing && filteredMarketing.length > 0 && (
+                <div className="absolute left-0 right-0 top-[calc(100%+0.35rem)] z-20 overflow-hidden rounded-lg border border-slate-200 bg-white shadow-xl shadow-slate-900/10">
+                  {filteredMarketing.map((item) => (
+                    <button
+                      key={item.id}
+                      type="button"
+                      onClick={() => setName(item.name)}
+                      className="block w-full px-4 py-3 text-left text-sm font-semibold text-slate-700 transition hover:bg-emerald-50 hover:text-emerald-700"
+                    >
+                      {item.name}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+            {name && (
+              <p className={matchedMarketing ? "text-xs font-semibold text-emerald-700" : "text-xs font-semibold text-red-600"}>
+                {matchedMarketing ? "Nama marketing ditemukan" : "Nama marketing tidak terdaftar"}
+              </p>
+            )}
+            {!name && marketing.length === 0 && (
+              <p className="text-xs font-semibold text-amber-700">
+                Admin perlu menambahkan nama marketing terlebih dahulu.
+              </p>
+            )}
           </div>
 
           <div className="space-y-2">
-            <Label className="text-sm font-semibold flex items-center gap-2">
-              <CalendarDays className="w-4 h-4" strokeWidth={1.5} /> Hari / Tanggal
+            <Label className="flex items-center gap-2 text-sm font-bold text-slate-900">
+              <CalendarDays className="h-4 w-4 text-emerald-700" strokeWidth={1.7} /> Hari / Tanggal
             </Label>
             <div
-              className="border border-input bg-muted px-3 py-2 text-sm text-foreground"
+              className="flex h-12 items-center rounded-lg border border-slate-200 bg-slate-50 px-4 text-sm font-medium text-slate-800"
               data-testid="attendance-date-display"
             >
               {tanggalLabel}
@@ -116,26 +166,28 @@ export default function AttendancePage() {
           </div>
 
           <div className="space-y-2">
-            <Label className="text-sm font-semibold flex items-center gap-2">
-              <Camera className="w-4 h-4" strokeWidth={1.5} /> Foto Absensi
+            <Label className="flex items-center gap-2 text-sm font-bold text-slate-900">
+              <Camera className="h-4 w-4 text-emerald-700" strokeWidth={1.7} /> Foto Absensi
             </Label>
             <button
               type="button"
               data-testid="attendance-photo-upload-area"
               onClick={() => fileRef.current?.click()}
-              className="w-full border-2 border-dashed border-input hover:border-primary transition-colors duration-200 ease-out p-6 flex flex-col items-center gap-2 bg-card"
+              className="group flex min-h-44 w-full flex-col items-center justify-center gap-3 rounded-lg border-2 border-dashed border-slate-300 bg-slate-50 p-4 transition duration-200 hover:border-emerald-500 hover:bg-emerald-50/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 sm:min-h-52"
             >
               {preview ? (
                 <img
                   src={preview}
                   alt="Pratinjau foto"
-                  className="max-h-48 object-contain border border-border"
+                  className="max-h-64 w-full rounded-md border border-slate-200 object-contain"
                   data-testid="attendance-photo-preview"
                 />
               ) : (
                 <>
-                  <Camera className="w-8 h-8 text-muted-foreground" strokeWidth={1.5} />
-                  <span className="text-sm text-muted-foreground">
+                  <span className="flex h-14 w-14 items-center justify-center rounded-full bg-white text-slate-500 shadow-sm transition group-hover:text-emerald-700">
+                    <Camera className="h-7 w-7" strokeWidth={1.7} />
+                  </span>
+                  <span className="text-center text-sm font-medium text-slate-600">
                     Klik untuk unggah foto (maks. 5MB)
                   </span>
                 </>
@@ -150,8 +202,8 @@ export default function AttendancePage() {
               onChange={handlePhoto}
             />
             {photo && (
-              <p className="text-xs text-muted-foreground" data-testid="attendance-photo-name">
-                {photo.name} — {(photo.size / 1024 / 1024).toFixed(2)} MB
+              <p className="text-xs text-slate-500" data-testid="attendance-photo-name">
+                {photo.name} - {(photo.size / 1024 / 1024).toFixed(2)} MB
               </p>
             )}
           </div>
@@ -159,24 +211,26 @@ export default function AttendancePage() {
           <Button
             type="submit"
             data-testid="attendance-submit-button"
-            disabled={submitting}
-            className="w-full hover:-translate-y-[2px] transition-transform duration-200 ease-out"
+            disabled={submitting || !matchedMarketing}
+            className="h-12 w-full rounded-lg bg-emerald-600 text-base font-bold shadow-lg shadow-emerald-900/15 transition duration-200 hover:-translate-y-0.5 hover:bg-emerald-700"
           >
-            <ClipboardCheck className="w-4 h-4 mr-2" strokeWidth={1.5} />
+            <ClipboardCheck className="mr-1 h-5 w-5" strokeWidth={1.7} />
             {submitting ? "Mengirim..." : "Kirim Absensi"}
           </Button>
-        </form>
+          </div>
+          </form>
 
-        <p className="text-center mt-6">
+        <p className="mt-5 text-center">
           <a
             href="/admin/login"
-            className="text-xs text-muted-foreground hover:text-primary transition-colors duration-200"
+            className="text-sm font-semibold text-slate-500 transition-colors duration-200 hover:text-emerald-700"
             data-testid="admin-login-link"
           >
             Masuk sebagai Admin
           </a>
         </p>
-      </div>
+        </section>
+      </main>
     </div>
   );
 }

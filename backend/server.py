@@ -90,6 +90,10 @@ class LoginInput(BaseModel):
     password: str
 
 
+class MarketingInput(BaseModel):
+    name: str
+
+
 MONTH_RE = re.compile(r"^\d{4}-\d{2}$")
 
 
@@ -104,8 +108,27 @@ def serialize_attendance(doc: dict) -> dict:
     }
 
 
+def serialize_marketing(doc: dict) -> dict:
+    return {
+        "id": str(doc["_id"]),
+        "name": doc["name"],
+        "created_at": doc.get("created_at"),
+    }
+
+
 def today_jakarta():
     return datetime.now(JAKARTA_TZ).date()
+
+
+async def find_marketing_by_name(name: str) -> Optional[dict]:
+    return await db.marketing.find_one({"name_lower": name.strip().lower()})
+
+
+async def require_registered_marketing(name: str) -> dict:
+    marketing = await find_marketing_by_name(name)
+    if not marketing:
+        raise HTTPException(status_code=404, detail="Nama marketing tidak terdaftar")
+    return marketing
 
 
 async def save_photo(photo: UploadFile) -> str:
@@ -157,20 +180,82 @@ async def me(admin=Depends(get_current_admin)):
     return admin
 
 
+@api_router.get("/marketing")
+async def list_marketing_public(q: Optional[str] = None):
+    query = {}
+    if q:
+        q = q.strip().lower()
+        if q:
+            query["name_lower"] = {"$regex": re.escape(q)}
+    docs = await db.marketing.find(query).sort("name", 1).to_list(1000)
+    return [serialize_marketing(d) for d in docs]
+
+
+@api_router.post("/marketing", status_code=201)
+async def create_marketing(input: MarketingInput, admin=Depends(get_current_admin)):
+    name = input.name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Nama marketing wajib diisi")
+    existing = await find_marketing_by_name(name)
+    if existing:
+        raise HTTPException(status_code=409, detail="Nama marketing sudah ada")
+    doc = {
+        "name": name,
+        "name_lower": name.lower(),
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    result = await db.marketing.insert_one(doc)
+    doc["_id"] = result.inserted_id
+    return serialize_marketing(doc)
+
+
+@api_router.put("/marketing/{marketing_id}")
+async def update_marketing(marketing_id: str, input: MarketingInput, admin=Depends(get_current_admin)):
+    try:
+        oid = ObjectId(marketing_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="ID tidak valid")
+    name = input.name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Nama marketing wajib diisi")
+    doc = await db.marketing.find_one({"_id": oid})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Data marketing tidak ditemukan")
+    duplicate = await db.marketing.find_one({"name_lower": name.lower(), "_id": {"$ne": oid}})
+    if duplicate:
+        raise HTTPException(status_code=409, detail="Nama marketing sudah ada")
+    await db.marketing.update_one({"_id": oid}, {"$set": {"name": name, "name_lower": name.lower()}})
+    doc.update({"name": name, "name_lower": name.lower()})
+    return serialize_marketing(doc)
+
+
+@api_router.delete("/marketing/{marketing_id}")
+async def delete_marketing(marketing_id: str, admin=Depends(get_current_admin)):
+    try:
+        oid = ObjectId(marketing_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="ID tidak valid")
+    result = await db.marketing.delete_one({"_id": oid})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Data marketing tidak ditemukan")
+    return {"message": "Data marketing berhasil dihapus"}
+
+
 @api_router.post("/attendance", status_code=201)
 async def submit_attendance(name: str = Form(...), photo: UploadFile = File(...)):
     name = name.strip()
     if not name:
         raise HTTPException(status_code=400, detail="Nama lengkap wajib diisi")
+    marketing = await require_registered_marketing(name)
     today = today_jakarta()
     date_str = today.isoformat()
-    existing = await db.attendance.find_one({"name_lower": name.lower(), "date": date_str})
+    existing = await db.attendance.find_one({"name_lower": marketing["name_lower"], "date": date_str})
     if existing:
         raise HTTPException(status_code=409, detail="Anda sudah melakukan absensi hari ini")
     photo_url = await save_photo(photo)
     doc = {
-        "name": name,
-        "name_lower": name.lower(),
+        "name": marketing["name"],
+        "name_lower": marketing["name_lower"],
         "date": date_str,
         "day_name": DAY_NAMES_ID[today.weekday()],
         "photo_url": photo_url,
@@ -202,19 +287,20 @@ async def add_attendance_manual(
     name = name.strip()
     if not name:
         raise HTTPException(status_code=400, detail="Nama lengkap wajib diisi")
+    marketing = await require_registered_marketing(name)
     try:
         d = datetime.strptime(date, "%Y-%m-%d").date()
     except ValueError:
         raise HTTPException(status_code=400, detail="Format tanggal tidak valid")
     if d > today_jakarta():
         raise HTTPException(status_code=400, detail="Tanggal absensi tidak boleh di masa depan")
-    existing = await db.attendance.find_one({"name_lower": name.lower(), "date": date})
+    existing = await db.attendance.find_one({"name_lower": marketing["name_lower"], "date": date})
     if existing:
         raise HTTPException(status_code=409, detail="Data absensi untuk nama dan tanggal ini sudah ada")
     photo_url = await save_photo(photo) if photo and photo.filename else None
     doc = {
-        "name": name,
-        "name_lower": name.lower(),
+        "name": marketing["name"],
+        "name_lower": marketing["name_lower"],
         "date": date,
         "day_name": DAY_NAMES_ID[d.weekday()],
         "photo_url": photo_url,
@@ -243,17 +329,18 @@ async def update_attendance(
     update = {}
     new_name = (name or doc["name"]).strip()
     new_date = date or doc["date"]
+    marketing = await require_registered_marketing(new_name)
     try:
         d = datetime.strptime(new_date, "%Y-%m-%d").date()
     except ValueError:
         raise HTTPException(status_code=400, detail="Format tanggal tidak valid")
     if d > today_jakarta():
         raise HTTPException(status_code=400, detail="Tanggal absensi tidak boleh di masa depan")
-    dup = await db.attendance.find_one({"name_lower": new_name.lower(), "date": new_date, "_id": {"$ne": oid}})
+    dup = await db.attendance.find_one({"name_lower": marketing["name_lower"], "date": new_date, "_id": {"$ne": oid}})
     if dup:
         raise HTTPException(status_code=409, detail="Data absensi untuk nama dan tanggal ini sudah ada")
-    update["name"] = new_name
-    update["name_lower"] = new_name.lower()
+    update["name"] = marketing["name"]
+    update["name_lower"] = marketing["name_lower"]
     update["date"] = new_date
     update["day_name"] = DAY_NAMES_ID[d.weekday()]
     if photo and photo.filename:
@@ -325,6 +412,7 @@ async def seed_admin():
 @app.on_event("startup")
 async def startup():
     await db.users.create_index("email", unique=True)
+    await db.marketing.create_index("name_lower", unique=True)
     await db.attendance.create_index([("name_lower", 1), ("date", 1)], unique=True)
     await db.login_attempts.create_index("identifier")
     await seed_admin()
