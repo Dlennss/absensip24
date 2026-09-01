@@ -34,6 +34,33 @@ function monthLabel(month) {
   });
 }
 
+function dateKey(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function dayNameId(dateStr) {
+  return new Date(`${dateStr}T00:00:00`).toLocaleDateString("id-ID", { weekday: "long" });
+}
+
+function getReportDays(month) {
+  const [year, monthNumber] = month.split("-").map(Number);
+  const firstDay = new Date(year, monthNumber - 1, 1);
+  const lastDayOfMonth = new Date(year, monthNumber, 0);
+  const today = new Date();
+  const currentMonth = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}`;
+  const lastDay = month === currentMonth ? today : lastDayOfMonth;
+  const days = [];
+
+  for (let date = new Date(firstDay); date <= lastDay; date.setDate(date.getDate() + 1)) {
+    days.push(dateKey(date));
+  }
+
+  return days;
+}
+
 function photoUrl(path) {
   return path ? `${BACKEND_URL}${path}` : "";
 }
@@ -53,15 +80,18 @@ function downloadCsv(filename, rows) {
   URL.revokeObjectURL(url);
 }
 
-function printMonthlyReport(title, records) {
-  const rows = records
+function printMonthlyReport(title, dailyRecords) {
+  const presentDays = dailyRecords.filter((item) => item.attended).length;
+  const rows = dailyRecords
     .map(
       (item, index) => `
         <tr>
           <td>${index + 1}</td>
           <td>${formatTanggal(item.date)}</td>
           <td>${item.day_name}</td>
-          <td>${item.photo_url ? `<img src="${photoUrl(item.photo_url)}" alt="" />` : "Tidak ada foto"}</td>
+          <td>${item.attended ? "Hadir" : "Tidak absen"}</td>
+          <td>${item.photo_url ? `<img src="${photoUrl(item.photo_url)}" alt="" />` : "Kosong"}</td>
+          <td>${item.attended ? formatRupiah(DAILY_RATE) : formatRupiah(0)}</td>
         </tr>
       `
     )
@@ -80,14 +110,15 @@ function printMonthlyReport(title, records) {
           th, td { border: 1px solid #cbd5e1; padding: 10px; text-align: left; vertical-align: top; }
           th { background: #f8fafc; }
           img { max-width: 180px; max-height: 180px; object-fit: contain; }
+          .muted { color: #64748b; }
         </style>
       </head>
       <body>
         <h1>${title}</h1>
-        <p>Total hadir: ${records.length} hari - Total gaji: ${formatRupiah(records.length * DAILY_RATE)}</p>
+        <p>Total hadir: ${presentDays} hari - Total gaji: ${formatRupiah(presentDays * DAILY_RATE)}</p>
         <table>
           <thead>
-            <tr><th>No</th><th>Tanggal</th><th>Hari</th><th>Foto</th></tr>
+            <tr><th>No</th><th>Tanggal</th><th>Hari</th><th>Status</th><th>Foto</th><th>Gaji</th></tr>
           </thead>
           <tbody>${rows}</tbody>
         </table>
@@ -142,20 +173,44 @@ export default function RecapTable({ month, onMonthChange }) {
     return recap.filter((item) => item.name.toLowerCase().includes(keyword));
   }, [recap, search]);
 
-  const selectedRecords = selectedRecap ? attendanceByName[selectedRecap.name.toLowerCase()] || [] : [];
+  const selectedRecords = useMemo(
+    () => (selectedRecap ? attendanceByName[selectedRecap.name.toLowerCase()] || [] : []),
+    [attendanceByName, selectedRecap]
+  );
+  const selectedDailyRecords = useMemo(() => {
+    if (!selectedRecap) return [];
+    const recordByDate = selectedRecords.reduce((map, item) => {
+      map[item.date] = item;
+      return map;
+    }, {});
+
+    return getReportDays(month).map((date) => {
+      const record = recordByDate[date];
+      return {
+        id: record?.id || `${selectedRecap.name}-${date}`,
+        name: selectedRecap.name,
+        date,
+        day_name: record?.day_name || dayNameId(date),
+        photo_url: record?.photo_url || null,
+        attended: Boolean(record),
+      };
+    });
+  }, [month, selectedRecap, selectedRecords]);
+  const selectedPresentDays = selectedDailyRecords.filter((item) => item.attended).length;
   const selectedTitle = selectedRecap
     ? `Rekap ${selectedRecap.name} - ${monthLabel(month)}`
     : `Rekap ${monthLabel(month)}`;
 
   const exportRecords = (records, filenameName = "semua-marketing") => {
     const rows = [
-      ["Nama Marketing", "Tanggal", "Hari", "Foto", "Gaji per Hari"],
+      ["Nama Marketing", "Tanggal", "Hari", "Status", "Foto", "Gaji"],
       ...records.map((item) => [
         item.name,
         formatTanggal(item.date),
         item.day_name,
+        item.attended === false ? "Tidak absen" : "Hadir",
         photoUrl(item.photo_url),
-        Math.round(DAILY_RATE),
+        item.attended === false ? 0 : Math.round(DAILY_RATE),
       ]),
     ];
     downloadCsv(`rekap-${filenameName}-${month}.csv`, rows);
@@ -284,7 +339,7 @@ export default function RecapTable({ month, onMonthChange }) {
           <DialogHeader>
             <DialogTitle>{selectedTitle}</DialogTitle>
             <DialogDescription>
-              {selectedRecords.length} hari hadir, total gaji {formatRupiah(selectedRecords.length * DAILY_RATE)}.
+              {selectedPresentDays} hari hadir, total gaji {formatRupiah(selectedPresentDays * DAILY_RATE)}.
             </DialogDescription>
           </DialogHeader>
 
@@ -292,7 +347,7 @@ export default function RecapTable({ month, onMonthChange }) {
             <Button
               type="button"
               variant="outline"
-              onClick={() => exportRecords(selectedRecords, selectedRecap?.name?.toLowerCase().replaceAll(" ", "-"))}
+              onClick={() => exportRecords(selectedDailyRecords, selectedRecap?.name?.toLowerCase().replaceAll(" ", "-"))}
               className="rounded-lg border-slate-200 bg-white font-bold"
               data-testid="monthly-export-button"
             >
@@ -302,7 +357,7 @@ export default function RecapTable({ month, onMonthChange }) {
             <Button
               type="button"
               variant="outline"
-              onClick={() => printMonthlyReport(selectedTitle, selectedRecords)}
+              onClick={() => printMonthlyReport(selectedTitle, selectedDailyRecords)}
               className="rounded-lg border-slate-200 bg-white font-bold"
               data-testid="monthly-print-button"
             >
@@ -312,11 +367,24 @@ export default function RecapTable({ month, onMonthChange }) {
           </div>
 
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {selectedRecords.map((item) => (
+            {selectedDailyRecords.map((item) => (
               <article key={item.id} className="overflow-hidden rounded-lg border border-slate-200 bg-white">
                 <div className="border-b border-slate-100 px-4 py-3">
-                  <p className="font-bold text-slate-900">{formatTanggal(item.date)}</p>
-                  <p className="text-sm text-slate-500">{item.day_name}</p>
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="font-bold text-slate-900">{formatTanggal(item.date)}</p>
+                      <p className="text-sm text-slate-500">{item.day_name}</p>
+                    </div>
+                    <span
+                      className={
+                        item.attended
+                          ? "rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-bold text-emerald-700"
+                          : "rounded-full bg-slate-100 px-2.5 py-1 text-xs font-bold text-slate-500"
+                      }
+                    >
+                      {item.attended ? "Hadir" : "Kosong"}
+                    </span>
+                  </div>
                 </div>
                 {item.photo_url ? (
                   <img
@@ -326,10 +394,14 @@ export default function RecapTable({ month, onMonthChange }) {
                     data-testid={`monthly-photo-${item.id}`}
                   />
                 ) : (
-                  <div className="flex h-64 items-center justify-center bg-slate-50 text-sm font-semibold text-slate-400">
-                    Tidak ada foto
+                  <div className="flex h-64 flex-col items-center justify-center gap-3 bg-slate-50 text-sm font-semibold text-slate-400">
+                    <ImageOff className="h-7 w-7" strokeWidth={1.7} />
+                    Tidak absen, foto kosong
                   </div>
                 )}
+                <div className="border-t border-slate-100 px-4 py-3 text-sm font-bold text-slate-700">
+                  Gaji hari ini: {item.attended ? formatRupiah(DAILY_RATE) : formatRupiah(0)}
+                </div>
               </article>
             ))}
           </div>
