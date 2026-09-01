@@ -11,12 +11,12 @@ import MarketingTable from "@/components/admin/MarketingTable";
 
 export default function AdminDashboard() {
   const navigate = useNavigate();
+  const currentMonth = new Date().toLocaleDateString("sv-SE", { timeZone: "Asia/Jakarta" }).slice(0, 7);
   const [checking, setChecking] = useState(true);
   const [adminName, setAdminName] = useState("Admin");
   const [attendance, setAttendance] = useState([]);
-  const [month, setMonth] = useState(() =>
-    new Date().toLocaleDateString("sv-SE", { timeZone: "Asia/Jakarta" }).slice(0, 7)
-  );
+  const [month, setMonth] = useState(currentMonth);
+  const [archiveMonth, setArchiveMonth] = useState(currentMonth);
 
   const fetchAttendance = useCallback(async () => {
     try {
@@ -114,12 +114,15 @@ export default function AdminDashboard() {
         </section>
 
         <Tabs defaultValue="data" className="rounded-lg border border-slate-200 bg-white p-3 shadow-sm sm:p-5">
-          <TabsList className="grid h-auto w-full grid-cols-3 rounded-lg bg-slate-100 p-1 sm:w-fit" data-testid="admin-tabs">
+          <TabsList className="grid h-auto w-full grid-cols-2 rounded-lg bg-slate-100 p-1 sm:w-fit sm:grid-cols-4" data-testid="admin-tabs">
             <TabsTrigger className="rounded-md px-4 py-2.5 font-bold data-[state=active]:bg-white data-[state=active]:text-emerald-700" value="data" data-testid="tab-data-absensi">
               Data Absensi
             </TabsTrigger>
             <TabsTrigger className="rounded-md px-4 py-2.5 font-bold data-[state=active]:bg-white data-[state=active]:text-emerald-700" value="recap" data-testid="tab-rekap-gaji">
               Rekap & Gaji
+            </TabsTrigger>
+            <TabsTrigger className="rounded-md px-4 py-2.5 font-bold data-[state=active]:bg-white data-[state=active]:text-emerald-700" value="months" data-testid="tab-bulan">
+              Bulan
             </TabsTrigger>
             <TabsTrigger className="rounded-md px-4 py-2.5 font-bold data-[state=active]:bg-white data-[state=active]:text-emerald-700" value="marketing" data-testid="tab-marketing">
               Marketing
@@ -134,7 +137,20 @@ export default function AdminDashboard() {
             />
           </TabsContent>
           <TabsContent value="recap" className="mt-6">
-            <RecapTable month={month} onMonthChange={setMonth} />
+            <RecapTable
+              month={currentMonth}
+              onMonthChange={() => {}}
+              showMonthPicker={false}
+              emptyMessage="Belum ada rekap bulan berjalan."
+            />
+          </TabsContent>
+          <TabsContent value="months" className="mt-6">
+            <RecapTable
+              month={archiveMonth}
+              onMonthChange={setArchiveMonth}
+              includeAllMarketing
+              emptyMessage="Belum ada data marketing untuk bulan ini."
+            />
           </TabsContent>
           <TabsContent value="marketing" className="mt-6">
             <MarketingTable />

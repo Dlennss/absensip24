@@ -130,24 +130,34 @@ function printMonthlyReport(title, dailyRecords) {
   printWindow.print();
 }
 
-export default function RecapTable({ month, onMonthChange }) {
+export default function RecapTable({
+  month,
+  onMonthChange,
+  showMonthPicker = true,
+  includeAllMarketing = false,
+  emptyMessage = "Tidak ada rekap yang cocok.",
+}) {
   const [recap, setRecap] = useState([]);
   const [attendance, setAttendance] = useState([]);
+  const [marketing, setMarketing] = useState([]);
   const [search, setSearch] = useState("");
   const [selectedRecap, setSelectedRecap] = useState(null);
 
   const fetchRecap = useCallback(async () => {
     try {
-      const [recapResponse, attendanceResponse] = await Promise.all([
+      const requests = [
         api.get("/recap", { params: { month } }),
         api.get("/attendance", { params: { month } }),
-      ]);
+      ];
+      if (includeAllMarketing) requests.push(api.get("/marketing"));
+      const [recapResponse, attendanceResponse, marketingResponse] = await Promise.all(requests);
       setRecap(recapResponse.data);
       setAttendance(attendanceResponse.data);
+      if (marketingResponse) setMarketing(marketingResponse.data);
     } catch (err) {
       toast.error(formatApiError(err));
     }
-  }, [month]);
+  }, [includeAllMarketing, month]);
 
   useEffect(() => {
     fetchRecap();
@@ -169,9 +179,20 @@ export default function RecapTable({ month, onMonthChange }) {
 
   const filteredRecap = useMemo(() => {
     const keyword = search.trim().toLowerCase();
-    if (!keyword) return recap;
-    return recap.filter((item) => item.name.toLowerCase().includes(keyword));
-  }, [recap, search]);
+    const source = includeAllMarketing
+      ? marketing.map((item) => {
+          const existing = recap.find((r) => r.name.toLowerCase() === item.name.toLowerCase());
+          return existing || {
+            name: item.name,
+            total_days: 0,
+            daily_rate: DAILY_RATE,
+            total_salary: 0,
+          };
+        })
+      : recap;
+    if (!keyword) return source;
+    return source.filter((item) => item.name.toLowerCase().includes(keyword));
+  }, [includeAllMarketing, marketing, recap, search]);
 
   const selectedRecords = useMemo(
     () => (selectedRecap ? attendanceByName[selectedRecap.name.toLowerCase()] || [] : []),
@@ -201,6 +222,29 @@ export default function RecapTable({ month, onMonthChange }) {
     ? `Rekap ${selectedRecap.name} - ${monthLabel(month)}`
     : `Rekap ${monthLabel(month)}`;
 
+  const buildDailyRecords = useCallback(
+    (name) => {
+      const records = attendanceByName[name.toLowerCase()] || [];
+      const recordByDate = records.reduce((map, item) => {
+        map[item.date] = item;
+        return map;
+      }, {});
+
+      return getReportDays(month).map((date) => {
+        const record = recordByDate[date];
+        return {
+          id: record?.id || `${name}-${date}`,
+          name,
+          date,
+          day_name: record?.day_name || dayNameId(date),
+          photo_url: record?.photo_url || null,
+          attended: Boolean(record),
+        };
+      });
+    },
+    [attendanceByName, month]
+  );
+
   const exportRecords = (records, filenameName = "semua-marketing") => {
     const rows = [
       ["Nama Marketing", "Tanggal", "Hari", "Status", "Foto", "Gaji"],
@@ -219,19 +263,26 @@ export default function RecapTable({ month, onMonthChange }) {
   return (
     <div data-testid="recap-table-section">
       <div className="mb-6 grid gap-4 lg:grid-cols-[220px_minmax(240px,1fr)_auto] lg:items-end">
-        <div className="space-y-2">
-          <Label htmlFor="recap-month" className="text-sm font-bold text-slate-900">
-            Bulan
-          </Label>
-          <Input
-            id="recap-month"
-            type="month"
-            data-testid="recap-month-input"
-            value={month}
-            onChange={(e) => onMonthChange(e.target.value)}
-            className="h-10 rounded-lg border-slate-200 bg-white shadow-none"
-          />
-        </div>
+        {showMonthPicker ? (
+          <div className="space-y-2">
+            <Label htmlFor="recap-month" className="text-sm font-bold text-slate-900">
+              Bulan
+            </Label>
+            <Input
+              id="recap-month"
+              type="month"
+              data-testid="recap-month-input"
+              value={month}
+              onChange={(e) => onMonthChange(e.target.value)}
+              className="h-10 rounded-lg border-slate-200 bg-white shadow-none"
+            />
+          </div>
+        ) : (
+          <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3">
+            <span className="block text-xs font-medium text-slate-500">Bulan Berjalan</span>
+            <span className="mt-1 block font-extrabold text-slate-950">{monthLabel(month)}</span>
+          </div>
+        )}
         <div className="space-y-2">
           <Label htmlFor="recap-search" className="text-sm font-bold text-slate-900">
             Cari Marketing
@@ -252,7 +303,12 @@ export default function RecapTable({ month, onMonthChange }) {
           <Button
             type="button"
             variant="outline"
-            onClick={() => exportRecords(attendance, "semua-marketing")}
+            onClick={() =>
+              exportRecords(
+                includeAllMarketing ? filteredRecap.flatMap((item) => buildDailyRecords(item.name)) : attendance,
+                "semua-marketing"
+              )
+            }
             className="h-10 rounded-lg border-slate-200 bg-white font-bold"
             data-testid="recap-export-all-button"
           >
@@ -288,7 +344,7 @@ export default function RecapTable({ month, onMonthChange }) {
                   className="py-12 text-center text-slate-500"
                   data-testid="recap-empty-state"
                 >
-                  Tidak ada rekap yang cocok.
+                  {emptyMessage}
                 </TableCell>
               </TableRow>
             ) : (
@@ -307,7 +363,7 @@ export default function RecapTable({ month, onMonthChange }) {
                       {formatRupiah(r.total_days * DAILY_RATE)}
                     </TableCell>
                     <TableCell className="text-right">
-                      {records.length > 0 ? (
+                      {records.length > 0 || includeAllMarketing ? (
                         <Button
                           type="button"
                           size="sm"
