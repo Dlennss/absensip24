@@ -31,6 +31,7 @@ api.interceptors.request.use((config) => {
 });
 
 export function formatApiError(e) {
+  if (e?.response?.status === 413) return "Ukuran foto terlalu besar. Maksimal 5MB.";
   const detail = e?.response?.data?.detail;
   if (typeof detail === "string") return detail;
   if (Array.isArray(detail)) return detail.map((d) => d?.msg || "").join(" ");

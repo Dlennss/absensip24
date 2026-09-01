@@ -81,5 +81,14 @@ jobs:
             sudo python3 -m venv .venv
             sudo .venv/bin/pip install --upgrade pip
             sudo .venv/bin/pip install -r requirements.txt
+            NGINX_CONF="/etc/nginx/sites-enabled/absensip24.com"
+            if sudo test -f "$NGINX_CONF"; then
+              if sudo grep -q "client_max_body_size" "$NGINX_CONF"; then
+                sudo sed -i "s/client_max_body_size .*/client_max_body_size 6m;/" "$NGINX_CONF"
+              else
+                sudo sed -i "/server_name absensip24.com www.absensip24.com;/a\\    client_max_body_size 6m;" "$NGINX_CONF"
+              fi
+              sudo nginx -t
+            fi
             sudo systemctl restart absensip24-backend
             sudo systemctl reload nginx
