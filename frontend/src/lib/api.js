@@ -1,8 +1,25 @@
 import axios from "axios";
 
-export const API_BASE =
-  process.env.REACT_APP_BACKEND_URL ||
-  (typeof window !== "undefined" ? window.location.origin : "");
+function resolveApiBase() {
+  const configuredUrl = process.env.REACT_APP_BACKEND_URL;
+  if (typeof window === "undefined") return configuredUrl || "";
+  if (!configuredUrl) return window.location.origin;
+
+  try {
+    const url = new URL(configuredUrl);
+    const isLocalBackend = ["localhost", "127.0.0.1", "::1"].includes(url.hostname);
+    const isRemoteBrowser = !["localhost", "127.0.0.1", "::1"].includes(window.location.hostname);
+    if (isLocalBackend && isRemoteBrowser) {
+      url.hostname = window.location.hostname;
+      return url.origin;
+    }
+    return url.origin;
+  } catch {
+    return configuredUrl;
+  }
+}
+
+export const API_BASE = resolveApiBase();
 export const API = `${API_BASE}/api`;
 
 const api = axios.create({ baseURL: API });

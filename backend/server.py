@@ -426,10 +426,13 @@ async def shutdown_db_client():
 app.include_router(api_router)
 app.mount("/api/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
 
+cors_origins = [origin.strip() for origin in os.environ.get("CORS_ORIGINS", "*").split(",") if origin.strip()]
+allow_all_origins = "*" in cors_origins
+
 app.add_middleware(
     CORSMiddleware,
-    allow_credentials=True,
-    allow_origins=os.environ.get("CORS_ORIGINS", "*").split(","),
+    allow_credentials=not allow_all_origins,
+    allow_origins=["*"] if allow_all_origins else cors_origins,
     allow_methods=["*"],
     allow_headers=["*"],
 )
