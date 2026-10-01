@@ -98,7 +98,7 @@ export default function AttendancePage() {
       }
       setCameraActive(true);
     } catch {
-      setCameraError("Kamera depan wajib diizinkan. Galeri dan upload berkas tidak bisa digunakan.");
+      setCameraError("Kamera depan wajib diizinkan untuk absensi.");
     }
   };
 
@@ -343,7 +343,7 @@ export default function AttendancePage() {
                       className="aspect-square w-full scale-x-[-1] object-cover"
                       data-testid="attendance-camera-video"
                     />
-                    <div className="pointer-events-none absolute inset-6 rounded-full border-2 border-white/80 shadow-[0_0_0_999px_rgba(15,23,42,0.28)]" />
+                    <div className="pointer-events-none absolute inset-6 rounded-full border-2 border-white/80" />
                   </div>
                   <div className="grid gap-2 sm:grid-cols-2">
                     <Button
@@ -374,9 +374,6 @@ export default function AttendancePage() {
                   </span>
                   <div>
                     <p className="font-bold text-slate-900">Wajib selfie kamera depan</p>
-                    <p className="mt-2 text-sm leading-6 text-slate-600">
-                      Galeri dan upload berkas dinonaktifkan. Ambil selfie di luar ruangan, wajah jelas, dan tersenyum.
-                    </p>
                   </div>
                   <Button
                     type="button"
