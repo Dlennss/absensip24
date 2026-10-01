@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, useRef } from "react";
+import { useCallback, useEffect, useMemo, useState, useRef } from "react";
 import axios from "axios";
 import { toast } from "sonner";
 import { Camera, CalendarDays, ClipboardCheck, RefreshCw, ShieldCheck, User, X } from "lucide-react";
@@ -55,16 +55,54 @@ export default function AttendancePage() {
     fetchMarketing();
   }, []);
 
-  const stopCamera = () => {
+  const stopCamera = useCallback(() => {
     if (streamRef.current) {
       streamRef.current.getTracks().forEach((track) => track.stop());
       streamRef.current = null;
     }
     setCameraActive(false);
     setCameraReady(false);
-  };
+  }, []);
 
-  useEffect(() => () => stopCamera(), []);
+  useEffect(() => () => stopCamera(), [stopCamera]);
+
+  useEffect(() => {
+    if (!cameraActive || !streamRef.current || !videoRef.current) return;
+    const video = videoRef.current;
+    video.srcObject = streamRef.current;
+    video.muted = true;
+    video.playsInline = true;
+    const playVideo = async () => {
+      try {
+        await video.play();
+      } catch {
+        setCameraError("Ketuk area kamera lalu coba lagi jika preview belum muncul.");
+      }
+    };
+    playVideo();
+  }, [cameraActive]);
+
+  const getFrontCameraStream = async () => {
+    try {
+      return await navigator.mediaDevices.getUserMedia({
+        audio: false,
+        video: {
+          facingMode: { exact: "user" },
+          width: { ideal: 1280 },
+          height: { ideal: 1280 },
+        },
+      });
+    } catch {
+      return await navigator.mediaDevices.getUserMedia({
+        audio: false,
+        video: {
+          facingMode: "user",
+          width: { ideal: 1280 },
+          height: { ideal: 1280 },
+        },
+      });
+    }
+  };
 
   const startCamera = async () => {
     if (!navigator.mediaDevices?.getUserMedia) {
@@ -76,14 +114,7 @@ export default function AttendancePage() {
       setPhoto(null);
       setPreview(null);
       stopCamera();
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: false,
-        video: {
-          facingMode: { exact: "user" },
-          width: { ideal: 1280 },
-          height: { ideal: 1280 },
-        },
-      });
+      const stream = await getFrontCameraStream();
       const [track] = stream.getVideoTracks();
       const facingMode = track?.getSettings?.().facingMode;
       if (facingMode && facingMode !== "user") {
@@ -92,10 +123,6 @@ export default function AttendancePage() {
         return;
       }
       streamRef.current = stream;
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        await videoRef.current.play();
-      }
       setCameraActive(true);
     } catch {
       setCameraError("Kamera depan wajib diizinkan untuk absensi.");
@@ -338,7 +365,9 @@ export default function AttendancePage() {
                     <video
                       ref={videoRef}
                       muted
+                      autoPlay
                       playsInline
+                      onLoadedMetadata={() => setCameraReady(true)}
                       onCanPlay={() => setCameraReady(true)}
                       className="aspect-square w-full scale-x-[-1] object-cover"
                       data-testid="attendance-camera-video"
