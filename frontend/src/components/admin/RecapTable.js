@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { toast } from "sonner";
-import { Download, Eye, ImageOff, Printer, Search } from "lucide-react";
+import { Download, Eye, ImageOff, Minus, Pencil, Plus, Printer, Search, Trash2 } from "lucide-react";
 import api, { API_BASE, formatApiError, formatRupiah, formatTanggal } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -80,8 +80,10 @@ function downloadCsv(filename, rows) {
   URL.revokeObjectURL(url);
 }
 
-function printMonthlyReport(title, dailyRecords) {
+function printMonthlyReport(title, dailyRecords, adjustments = []) {
   const presentDays = dailyRecords.filter((item) => item.attended).length;
+  const adjustmentTotal = adjustments.reduce((sum, item) => sum + item.amount, 0);
+  const finalTotal = presentDays * DAILY_RATE + adjustmentTotal;
   const rows = dailyRecords
     .map(
       (item, index) => `
@@ -92,6 +94,16 @@ function printMonthlyReport(title, dailyRecords) {
           <td>${item.attended ? "Hadir" : "Tidak absen"}</td>
           <td>${item.photo_url ? `<img src="${photoUrl(item.photo_url)}" alt="" />` : "Kosong"}</td>
           <td>${item.attended ? formatRupiah(DAILY_RATE) : formatRupiah(0)}</td>
+        </tr>
+      `
+    )
+    .join("");
+  const adjustmentRows = adjustments
+    .map(
+      (item) => `
+        <tr>
+          <td>${item.note || (item.amount > 0 ? "Tambahan gaji" : "Pengurangan gaji")}</td>
+          <td>${formatRupiah(item.amount)}</td>
         </tr>
       `
     )
@@ -115,13 +127,18 @@ function printMonthlyReport(title, dailyRecords) {
       </head>
       <body>
         <h1>${title}</h1>
-        <p>Total hadir: ${presentDays} hari - Total gaji: ${formatRupiah(presentDays * DAILY_RATE)}</p>
+        <p>Total hadir: ${presentDays} hari - gaji hadir ${formatRupiah(presentDays * DAILY_RATE)} - penyesuaian ${formatRupiah(adjustmentTotal)} - total akhir ${formatRupiah(finalTotal)}</p>
         <table>
           <thead>
             <tr><th>No</th><th>Tanggal</th><th>Hari</th><th>Status</th><th>Foto</th><th>Gaji</th></tr>
           </thead>
           <tbody>${rows}</tbody>
         </table>
+        ${
+          adjustments.length
+            ? `<h1 style="margin-top:24px">Penyesuaian Gaji</h1><table><thead><tr><th>Catatan</th><th>Nominal</th></tr></thead><tbody>${adjustmentRows}</tbody></table>`
+            : ""
+        }
       </body>
     </html>
   `);
@@ -140,19 +157,25 @@ export default function RecapTable({
   const [recap, setRecap] = useState([]);
   const [attendance, setAttendance] = useState([]);
   const [marketing, setMarketing] = useState([]);
+  const [salaryAdjustments, setSalaryAdjustments] = useState([]);
   const [search, setSearch] = useState("");
   const [selectedRecap, setSelectedRecap] = useState(null);
+  const [adjustmentAmount, setAdjustmentAmount] = useState("");
+  const [adjustmentNote, setAdjustmentNote] = useState("");
+  const [editingAdjustment, setEditingAdjustment] = useState(null);
 
   const fetchRecap = useCallback(async () => {
     try {
       const requests = [
         api.get("/recap", { params: { month } }),
         api.get("/attendance", { params: { month } }),
+        api.get("/salary-adjustments", { params: { month } }),
       ];
       if (includeAllMarketing) requests.push(api.get("/marketing"));
-      const [recapResponse, attendanceResponse, marketingResponse] = await Promise.all(requests);
+      const [recapResponse, attendanceResponse, adjustmentResponse, marketingResponse] = await Promise.all(requests);
       setRecap(recapResponse.data);
       setAttendance(attendanceResponse.data);
+      setSalaryAdjustments(adjustmentResponse.data);
       if (marketingResponse) setMarketing(marketingResponse.data);
     } catch (err) {
       toast.error(formatApiError(err));
@@ -177,6 +200,18 @@ export default function RecapTable({
     [attendance]
   );
 
+  const adjustmentByName = useMemo(
+    () =>
+      salaryAdjustments.reduce((map, item) => {
+        const key = item.name.toLowerCase();
+        if (!map[key]) map[key] = { total: 0, items: [] };
+        map[key].total += item.amount;
+        map[key].items.push(item);
+        return map;
+      }, {}),
+    [salaryAdjustments]
+  );
+
   const filteredRecap = useMemo(() => {
     const keyword = search.trim().toLowerCase();
     const source = includeAllMarketing
@@ -198,6 +233,11 @@ export default function RecapTable({
     () => (selectedRecap ? attendanceByName[selectedRecap.name.toLowerCase()] || [] : []),
     [attendanceByName, selectedRecap]
   );
+  const selectedAdjustments = useMemo(
+    () => (selectedRecap ? adjustmentByName[selectedRecap.name.toLowerCase()]?.items || [] : []),
+    [adjustmentByName, selectedRecap]
+  );
+  const selectedAdjustmentTotal = selectedAdjustments.reduce((sum, item) => sum + item.amount, 0);
   const selectedDailyRecords = useMemo(() => {
     if (!selectedRecap) return [];
     const recordByDate = selectedRecords.reduce((map, item) => {
@@ -218,9 +258,68 @@ export default function RecapTable({
     });
   }, [month, selectedRecap, selectedRecords]);
   const selectedPresentDays = selectedDailyRecords.filter((item) => item.attended).length;
+  const selectedBaseSalary = selectedPresentDays * DAILY_RATE;
+  const selectedFinalSalary = selectedBaseSalary + selectedAdjustmentTotal;
   const selectedTitle = selectedRecap
     ? `Rekap ${selectedRecap.name} - ${monthLabel(month)}`
     : `Rekap ${monthLabel(month)}`;
+
+  const resetAdjustmentForm = () => {
+    setAdjustmentAmount("");
+    setAdjustmentNote("");
+    setEditingAdjustment(null);
+  };
+
+  const saveAdjustment = async (sign = 1) => {
+    if (!selectedRecap) return;
+    const rawAmount = Number(adjustmentAmount);
+    if (!rawAmount || Number.isNaN(rawAmount)) {
+      toast.error("Nominal gaji wajib diisi");
+      return;
+    }
+    const amount = editingAdjustment ? rawAmount : Math.abs(rawAmount) * sign;
+    try {
+      if (editingAdjustment) {
+        await api.put(`/salary-adjustments/${editingAdjustment.id}`, {
+          name: selectedRecap.name,
+          month,
+          amount,
+          note: adjustmentNote,
+        });
+        toast.success("Penyesuaian gaji diperbarui");
+      } else {
+        await api.post("/salary-adjustments", {
+          name: selectedRecap.name,
+          month,
+          amount,
+          note: adjustmentNote,
+        });
+        toast.success(amount > 0 ? "Tambahan gaji disimpan" : "Pengurangan gaji disimpan");
+      }
+      resetAdjustmentForm();
+      fetchRecap();
+    } catch (err) {
+      toast.error(formatApiError(err));
+    }
+  };
+
+  const startEditAdjustment = (item) => {
+    setEditingAdjustment(item);
+    setAdjustmentAmount(String(item.amount));
+    setAdjustmentNote(item.note || "");
+  };
+
+  const deleteAdjustment = async (item) => {
+    if (!window.confirm("Hapus penyesuaian gaji ini?")) return;
+    try {
+      await api.delete(`/salary-adjustments/${item.id}`);
+      toast.success("Penyesuaian gaji dihapus");
+      if (editingAdjustment?.id === item.id) resetAdjustmentForm();
+      fetchRecap();
+    } catch (err) {
+      toast.error(formatApiError(err));
+    }
+  };
 
   const buildDailyRecords = useCallback(
     (name) => {
@@ -256,6 +355,34 @@ export default function RecapTable({
         photoUrl(item.photo_url),
         item.attended === false ? 0 : Math.round(DAILY_RATE),
       ]),
+    ];
+    downloadCsv(`rekap-${filenameName}-${month}.csv`, rows);
+  };
+
+  const exportSelectedRecords = () => {
+    const filenameName = selectedRecap?.name?.toLowerCase().replaceAll(" ", "-") || "marketing";
+    const rows = [
+      ["Nama Marketing", "Tanggal", "Hari", "Status", "Foto", "Gaji"],
+      ...selectedDailyRecords.map((item) => [
+        item.name,
+        formatTanggal(item.date),
+        item.day_name,
+        item.attended ? "Hadir" : "Tidak absen",
+        photoUrl(item.photo_url),
+        item.attended ? Math.round(DAILY_RATE) : 0,
+      ]),
+      [],
+      ["Penyesuaian Gaji"],
+      ["Catatan", "Nominal"],
+      ...selectedAdjustments.map((item) => [
+        item.note || (item.amount > 0 ? "Tambahan gaji" : "Pengurangan gaji"),
+        item.amount,
+      ]),
+      [],
+      ["Total Hari Hadir", selectedPresentDays],
+      ["Gaji Hadir", Math.round(selectedBaseSalary)],
+      ["Total Penyesuaian", selectedAdjustmentTotal],
+      ["Total Akhir", Math.round(selectedFinalSalary)],
     ];
     downloadCsv(`rekap-${filenameName}-${month}.csv`, rows);
   };
@@ -350,6 +477,8 @@ export default function RecapTable({
             ) : (
               filteredRecap.map((r) => {
                 const records = attendanceByName[r.name.toLowerCase()] || [];
+                const adjustmentTotal = adjustmentByName[r.name.toLowerCase()]?.total || 0;
+                const totalSalary = r.total_days * DAILY_RATE + adjustmentTotal;
                 return (
                   <TableRow className="hover:bg-emerald-50/40" key={r.name} data-testid={`recap-row-${r.name}`}>
                     <TableCell className="font-bold text-slate-900">{r.name}</TableCell>
@@ -360,20 +489,21 @@ export default function RecapTable({
                       {formatRupiah(DAILY_RATE)}
                     </TableCell>
                     <TableCell className="font-extrabold text-emerald-700" data-testid={`recap-salary-${r.name}`}>
-                      {formatRupiah(r.total_days * DAILY_RATE)}
+                      {formatRupiah(totalSalary)}
                     </TableCell>
                     <TableCell className="text-right">
                       {records.length > 0 || includeAllMarketing ? (
                         <Button
                           type="button"
-                          size="sm"
+                          size="icon"
                           variant="outline"
                           onClick={() => setSelectedRecap(r)}
-                          className="rounded-lg border-slate-200 bg-white font-bold text-slate-700 hover:bg-emerald-50 hover:text-emerald-700"
+                          className="rounded-lg border-slate-200 bg-white text-slate-700 hover:bg-emerald-50 hover:text-emerald-700"
+                          title="Lihat dan kelola gaji"
+                          aria-label={`Lihat dan kelola gaji ${r.name}`}
                           data-testid={`recap-view-monthly-button-${r.name}`}
                         >
                           <Eye className="h-4 w-4" strokeWidth={1.7} />
-                          Rekap Bulanan
                         </Button>
                       ) : (
                         <span className="inline-flex h-9 items-center gap-2 rounded-lg border border-slate-200 px-3 text-xs font-semibold text-slate-400">
@@ -390,12 +520,19 @@ export default function RecapTable({
         </Table>
       </div>
 
-      <Dialog open={!!selectedRecap} onOpenChange={() => setSelectedRecap(null)}>
+      <Dialog
+        open={!!selectedRecap}
+        onOpenChange={() => {
+          setSelectedRecap(null);
+          resetAdjustmentForm();
+        }}
+      >
         <DialogContent className="max-h-[90vh] max-w-5xl overflow-y-auto rounded-lg border-slate-200" data-testid="monthly-recap-dialog">
           <DialogHeader>
             <DialogTitle>{selectedTitle}</DialogTitle>
             <DialogDescription>
-              {selectedPresentDays} hari hadir, total gaji {formatRupiah(selectedPresentDays * DAILY_RATE)}.
+              {selectedPresentDays} hari hadir, gaji hadir {formatRupiah(selectedBaseSalary)}, penyesuaian{" "}
+              {formatRupiah(selectedAdjustmentTotal)}, total akhir {formatRupiah(selectedFinalSalary)}.
             </DialogDescription>
           </DialogHeader>
 
@@ -403,7 +540,7 @@ export default function RecapTable({
             <Button
               type="button"
               variant="outline"
-              onClick={() => exportRecords(selectedDailyRecords, selectedRecap?.name?.toLowerCase().replaceAll(" ", "-"))}
+              onClick={exportSelectedRecords}
               className="rounded-lg border-slate-200 bg-white font-bold"
               data-testid="monthly-export-button"
             >
@@ -413,7 +550,7 @@ export default function RecapTable({
             <Button
               type="button"
               variant="outline"
-              onClick={() => printMonthlyReport(selectedTitle, selectedDailyRecords)}
+              onClick={() => printMonthlyReport(selectedTitle, selectedDailyRecords, selectedAdjustments)}
               className="rounded-lg border-slate-200 bg-white font-bold"
               data-testid="monthly-print-button"
             >
@@ -421,6 +558,146 @@ export default function RecapTable({
               Print / PDF
             </Button>
           </div>
+
+          <section className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+            <div className="mb-4 flex flex-col gap-1">
+              <h3 className="text-sm font-extrabold text-slate-950">Penyesuaian Gaji</h3>
+              <p className="text-xs font-medium text-slate-500">
+                Tambahkan bonus atau potongan tanpa mengubah data absensi.
+              </p>
+            </div>
+            <div className="grid gap-3 md:grid-cols-[180px_minmax(220px,1fr)_auto] md:items-end">
+              <div className="space-y-2">
+                <Label htmlFor="salary-adjustment-amount" className="text-xs font-bold text-slate-700">
+                  Nominal
+                </Label>
+                <Input
+                  id="salary-adjustment-amount"
+                  type="number"
+                  value={adjustmentAmount}
+                  onChange={(e) => setAdjustmentAmount(e.target.value)}
+                  placeholder="Contoh: 50000"
+                  className="h-10 rounded-lg border-slate-200 bg-white"
+                  data-testid="salary-adjustment-amount-input"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="salary-adjustment-note" className="text-xs font-bold text-slate-700">
+                  Catatan
+                </Label>
+                <Input
+                  id="salary-adjustment-note"
+                  value={adjustmentNote}
+                  onChange={(e) => setAdjustmentNote(e.target.value)}
+                  placeholder="Contoh: bonus target / kasbon"
+                  className="h-10 rounded-lg border-slate-200 bg-white"
+                  data-testid="salary-adjustment-note-input"
+                />
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {editingAdjustment ? (
+                  <>
+                    <Button
+                      type="button"
+                      onClick={() => saveAdjustment()}
+                      className="h-10 rounded-lg bg-emerald-600 font-bold hover:bg-emerald-700"
+                      data-testid="salary-adjustment-save-edit-button"
+                    >
+                      Simpan
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={resetAdjustmentForm}
+                      className="h-10 rounded-lg border-slate-200 bg-white font-bold"
+                    >
+                      Batal
+                    </Button>
+                  </>
+                ) : (
+                  <>
+                    <Button
+                      type="button"
+                      onClick={() => saveAdjustment(1)}
+                      className="h-10 rounded-lg bg-emerald-600 font-bold hover:bg-emerald-700"
+                      data-testid="salary-adjustment-add-button"
+                    >
+                      <Plus className="h-4 w-4" strokeWidth={1.7} />
+                      Tambah
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => saveAdjustment(-1)}
+                      className="h-10 rounded-lg border-red-200 bg-white font-bold text-red-700 hover:bg-red-50"
+                      data-testid="salary-adjustment-subtract-button"
+                    >
+                      <Minus className="h-4 w-4" strokeWidth={1.7} />
+                      Kurangi
+                    </Button>
+                  </>
+                )}
+              </div>
+            </div>
+
+            <div className="mt-4 overflow-hidden rounded-lg border border-slate-200 bg-white">
+              <Table className="min-w-[620px]" data-testid="salary-adjustments-table">
+                <TableHeader>
+                  <TableRow className="bg-white hover:bg-white">
+                    <TableHead>Catatan</TableHead>
+                    <TableHead>Nominal</TableHead>
+                    <TableHead className="text-right">Aksi</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {selectedAdjustments.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={3} className="py-8 text-center text-sm text-slate-500">
+                        Belum ada tambahan atau pengurangan gaji.
+                      </TableCell>
+                    </TableRow>
+                  ) : (
+                    selectedAdjustments.map((item) => (
+                      <TableRow key={item.id}>
+                        <TableCell className="font-semibold text-slate-700">
+                          {item.note || (item.amount > 0 ? "Tambahan gaji" : "Pengurangan gaji")}
+                        </TableCell>
+                        <TableCell className={item.amount >= 0 ? "font-bold text-emerald-700" : "font-bold text-red-700"}>
+                          {formatRupiah(item.amount)}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <div className="flex justify-end gap-2">
+                            <Button
+                              type="button"
+                              size="icon"
+                              variant="outline"
+                              onClick={() => startEditAdjustment(item)}
+                              className="rounded-lg border-slate-200 bg-white"
+                              title="Edit penyesuaian"
+                              aria-label="Edit penyesuaian"
+                            >
+                              <Pencil className="h-4 w-4" strokeWidth={1.7} />
+                            </Button>
+                            <Button
+                              type="button"
+                              size="icon"
+                              variant="outline"
+                              onClick={() => deleteAdjustment(item)}
+                              className="rounded-lg border-slate-200 bg-white"
+                              title="Hapus penyesuaian"
+                              aria-label="Hapus penyesuaian"
+                            >
+                              <Trash2 className="h-4 w-4 text-red-600" strokeWidth={1.7} />
+                            </Button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ))
+                  )}
+                </TableBody>
+              </Table>
+            </div>
+          </section>
 
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {selectedDailyRecords.map((item) => (

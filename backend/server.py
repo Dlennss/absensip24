@@ -94,6 +94,13 @@ class MarketingInput(BaseModel):
     name: str
 
 
+class SalaryAdjustmentInput(BaseModel):
+    name: str
+    month: str
+    amount: int
+    note: Optional[str] = None
+
+
 MONTH_RE = re.compile(r"^\d{4}-\d{2}$")
 
 
@@ -113,6 +120,18 @@ def serialize_marketing(doc: dict) -> dict:
         "id": str(doc["_id"]),
         "name": doc["name"],
         "created_at": doc.get("created_at"),
+    }
+
+
+def serialize_salary_adjustment(doc: dict) -> dict:
+    return {
+        "id": str(doc["_id"]),
+        "name": doc["name"],
+        "month": doc["month"],
+        "amount": doc["amount"],
+        "note": doc.get("note", ""),
+        "created_at": doc.get("created_at"),
+        "updated_at": doc.get("updated_at"),
     }
 
 
@@ -375,6 +394,74 @@ async def delete_attendance(attendance_id: str, admin=Depends(get_current_admin)
     return {"message": "Data absensi berhasil dihapus"}
 
 
+@api_router.get("/salary-adjustments")
+async def list_salary_adjustments(month: str, admin=Depends(get_current_admin)):
+    if not MONTH_RE.match(month):
+        raise HTTPException(status_code=400, detail="Format bulan harus YYYY-MM")
+    docs = await db.salary_adjustments.find({"month": month}).sort([("name", 1), ("created_at", 1)]).to_list(5000)
+    return [serialize_salary_adjustment(d) for d in docs]
+
+
+@api_router.post("/salary-adjustments", status_code=201)
+async def create_salary_adjustment(input: SalaryAdjustmentInput, admin=Depends(get_current_admin)):
+    if not MONTH_RE.match(input.month):
+        raise HTTPException(status_code=400, detail="Format bulan harus YYYY-MM")
+    if input.amount == 0:
+        raise HTTPException(status_code=400, detail="Nominal tidak boleh 0")
+    marketing = await require_registered_marketing(input.name)
+    doc = {
+        "name": marketing["name"],
+        "name_lower": marketing["name_lower"],
+        "month": input.month,
+        "amount": int(input.amount),
+        "note": (input.note or "").strip(),
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "updated_at": None,
+    }
+    result = await db.salary_adjustments.insert_one(doc)
+    doc["_id"] = result.inserted_id
+    return serialize_salary_adjustment(doc)
+
+
+@api_router.put("/salary-adjustments/{adjustment_id}")
+async def update_salary_adjustment(adjustment_id: str, input: SalaryAdjustmentInput, admin=Depends(get_current_admin)):
+    try:
+        oid = ObjectId(adjustment_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="ID tidak valid")
+    if not MONTH_RE.match(input.month):
+        raise HTTPException(status_code=400, detail="Format bulan harus YYYY-MM")
+    if input.amount == 0:
+        raise HTTPException(status_code=400, detail="Nominal tidak boleh 0")
+    doc = await db.salary_adjustments.find_one({"_id": oid})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Penyesuaian gaji tidak ditemukan")
+    marketing = await require_registered_marketing(input.name)
+    update = {
+        "name": marketing["name"],
+        "name_lower": marketing["name_lower"],
+        "month": input.month,
+        "amount": int(input.amount),
+        "note": (input.note or "").strip(),
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.salary_adjustments.update_one({"_id": oid}, {"$set": update})
+    doc.update(update)
+    return serialize_salary_adjustment(doc)
+
+
+@api_router.delete("/salary-adjustments/{adjustment_id}")
+async def delete_salary_adjustment(adjustment_id: str, admin=Depends(get_current_admin)):
+    try:
+        oid = ObjectId(adjustment_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="ID tidak valid")
+    result = await db.salary_adjustments.delete_one({"_id": oid})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Penyesuaian gaji tidak ditemukan")
+    return {"message": "Penyesuaian gaji berhasil dihapus"}
+
+
 @api_router.get("/recap")
 async def recap(month: Optional[str] = None, admin=Depends(get_current_admin)):
     query = {}
@@ -427,6 +514,7 @@ async def startup():
     await db.users.create_index("email", unique=True)
     await db.marketing.create_index("name_lower", unique=True)
     await db.attendance.create_index([("name_lower", 1), ("date", 1)], unique=True)
+    await db.salary_adjustments.create_index([("name_lower", 1), ("month", 1)])
     await db.login_attempts.create_index("identifier")
     await seed_admin()
 
