@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, useRef } from "react";
 import axios from "axios";
 import { toast } from "sonner";
-import { Camera, CalendarDays, ClipboardCheck, User } from "lucide-react";
+import { Camera, CalendarDays, ClipboardCheck, RefreshCw, ShieldCheck, User, X } from "lucide-react";
 import { API, formatApiError } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -14,8 +14,14 @@ export default function AttendancePage() {
   const [marketing, setMarketing] = useState([]);
   const [photo, setPhoto] = useState(null);
   const [preview, setPreview] = useState(null);
+  const [cameraActive, setCameraActive] = useState(false);
+  const [cameraReady, setCameraReady] = useState(false);
+  const [cameraError, setCameraError] = useState("");
+  const [validatingPhoto, setValidatingPhoto] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  const fileRef = useRef(null);
+  const videoRef = useRef(null);
+  const canvasRef = useRef(null);
+  const streamRef = useRef(null);
 
   const today = new Date();
   const tanggalLabel = today.toLocaleDateString("id-ID", {
@@ -49,21 +55,154 @@ export default function AttendancePage() {
     fetchMarketing();
   }, []);
 
-  const handlePhoto = (e) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    if (!file.type.startsWith("image/")) {
-      toast.error("File harus berupa gambar (JPG/PNG)");
-      e.target.value = "";
+  const stopCamera = () => {
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((track) => track.stop());
+      streamRef.current = null;
+    }
+    setCameraActive(false);
+    setCameraReady(false);
+  };
+
+  useEffect(() => () => stopCamera(), []);
+
+  const startCamera = async () => {
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setCameraError("Browser ini belum mendukung kamera langsung.");
       return;
     }
-    if (file.size > MAX_SIZE) {
-      toast.error("Ukuran foto maksimal 5MB");
-      e.target.value = "";
+    try {
+      setCameraError("");
+      setPhoto(null);
+      setPreview(null);
+      stopCamera();
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: false,
+        video: {
+          facingMode: { exact: "user" },
+          width: { ideal: 1280 },
+          height: { ideal: 1280 },
+        },
+      });
+      const [track] = stream.getVideoTracks();
+      const facingMode = track?.getSettings?.().facingMode;
+      if (facingMode && facingMode !== "user") {
+        track.stop();
+        setCameraError("Wajib memakai kamera depan untuk selfie.");
+        return;
+      }
+      streamRef.current = stream;
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        await videoRef.current.play();
+      }
+      setCameraActive(true);
+    } catch {
+      setCameraError("Kamera depan wajib diizinkan. Galeri dan upload berkas tidak bisa digunakan.");
+    }
+  };
+
+  const validateCapturedCanvas = async (canvas) => {
+    const ctx = canvas.getContext("2d");
+    const { data, width, height } = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    let brightness = 0;
+    let saturatedPixels = 0;
+
+    for (let i = 0; i < data.length; i += 16) {
+      const r = data[i];
+      const g = data[i + 1];
+      const b = data[i + 2];
+      const max = Math.max(r, g, b);
+      const min = Math.min(r, g, b);
+      brightness += (r + g + b) / 3;
+      if (max - min > 35) saturatedPixels += 1;
+    }
+
+    const sampleCount = data.length / 16;
+    const averageBrightness = brightness / sampleCount;
+    const saturationRatio = saturatedPixels / sampleCount;
+
+    if (averageBrightness < 72) {
+      return "Foto terlalu gelap. Ambil selfie di luar ruangan atau area terbuka yang terang.";
+    }
+    if (saturationRatio < 0.18) {
+      return "Foto terlihat seperti ruangan tertutup/kurang natural. Ambil selfie di luar ruangan yang terang.";
+    }
+
+    if ("FaceDetector" in window) {
+      try {
+        const detector = new window.FaceDetector({ fastMode: true, maxDetectedFaces: 2 });
+        const faces = await detector.detect(canvas);
+        if (faces.length !== 1) return "Wajib selfie satu wajah. Foto ID card atau objek lain tidak diterima.";
+        const face = faces[0].boundingBox;
+        const faceArea = (face.width * face.height) / (width * height);
+        const faceCenterX = face.x + face.width / 2;
+        if (faceArea < 0.08 || faceCenterX < width * 0.22 || faceCenterX > width * 0.78) {
+          return "Wajah harus jelas dan berada di tengah kamera depan.";
+        }
+      } catch {
+        return "";
+      }
+    }
+
+    return "";
+  };
+
+  const captureSelfie = async () => {
+    if (!videoRef.current || !cameraReady) {
+      toast.error("Kamera belum siap");
       return;
     }
-    setPhoto(file);
-    setPreview(URL.createObjectURL(file));
+    setValidatingPhoto(true);
+    try {
+      const video = videoRef.current;
+      const canvas = canvasRef.current;
+      const size = 900;
+      canvas.width = size;
+      canvas.height = size;
+      const ctx = canvas.getContext("2d");
+      const sourceSize = Math.min(video.videoWidth, video.videoHeight);
+      const sx = (video.videoWidth - sourceSize) / 2;
+      const sy = (video.videoHeight - sourceSize) / 2;
+      ctx.translate(size, 0);
+      ctx.scale(-1, 1);
+      ctx.drawImage(video, sx, sy, sourceSize, sourceSize, 0, 0, size, size);
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+
+      const validationError = await validateCapturedCanvas(canvas);
+      if (validationError) {
+        toast.error(validationError);
+        return;
+      }
+
+      canvas.toBlob(
+        (blob) => {
+          if (!blob) {
+            toast.error("Foto gagal diambil");
+            return;
+          }
+          if (blob.size > MAX_SIZE) {
+            toast.error("Ukuran foto maksimal 5MB");
+            return;
+          }
+          const file = new File([blob], `selfie-${Date.now()}.jpg`, { type: "image/jpeg" });
+          setPhoto(file);
+          setPreview(URL.createObjectURL(blob));
+          stopCamera();
+          toast.success("Selfie diterima. Pastikan wajah tersenyum dan jelas.");
+        },
+        "image/jpeg",
+        0.86
+      );
+    } finally {
+      setValidatingPhoto(false);
+    }
+  };
+
+  const retakePhoto = () => {
+    setPhoto(null);
+    setPreview(null);
+    startCamera();
   };
 
   const handleSubmit = async (e) => {
@@ -91,7 +230,6 @@ export default function AttendancePage() {
       setPhoto(null);
       setPreview(null);
       fetchMarketing();
-      if (fileRef.current) fileRef.current.value = "";
     } catch (err) {
       toast.error(formatApiError(err));
     } finally {
@@ -171,38 +309,96 @@ export default function AttendancePage() {
             <Label className="flex items-center gap-2 text-sm font-bold text-slate-900">
               <Camera className="h-4 w-4 text-emerald-700" strokeWidth={1.7} /> Foto Absensi
             </Label>
-            <button
-              type="button"
-              data-testid="attendance-photo-upload-area"
-              onClick={() => fileRef.current?.click()}
-              className="group flex min-h-44 w-full flex-col items-center justify-center gap-3 rounded-lg border-2 border-dashed border-slate-300 bg-slate-50 p-4 transition duration-200 hover:border-emerald-500 hover:bg-emerald-50/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 sm:min-h-52"
+            <div
+              className="overflow-hidden rounded-lg border-2 border-dashed border-slate-300 bg-slate-50"
+              data-testid="attendance-camera-section"
             >
               {preview ? (
-                <img
-                  src={preview}
-                  alt="Pratinjau foto"
-                  className="max-h-64 w-full rounded-md border border-slate-200 object-contain"
-                  data-testid="attendance-photo-preview"
-                />
+                <div className="p-4">
+                  <img
+                    src={preview}
+                    alt="Pratinjau selfie"
+                    className="max-h-72 w-full rounded-md border border-slate-200 bg-white object-contain"
+                    data-testid="attendance-photo-preview"
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={retakePhoto}
+                    className="mt-3 h-10 w-full rounded-lg border-slate-200 bg-white font-bold"
+                    data-testid="attendance-retake-photo-button"
+                  >
+                    <RefreshCw className="h-4 w-4" strokeWidth={1.7} />
+                    Ambil Ulang Selfie
+                  </Button>
+                </div>
+              ) : cameraActive ? (
+                <div className="space-y-3 p-4">
+                  <div className="relative overflow-hidden rounded-lg bg-black">
+                    <video
+                      ref={videoRef}
+                      muted
+                      playsInline
+                      onCanPlay={() => setCameraReady(true)}
+                      className="aspect-square w-full scale-x-[-1] object-cover"
+                      data-testid="attendance-camera-video"
+                    />
+                    <div className="pointer-events-none absolute inset-6 rounded-full border-2 border-white/80 shadow-[0_0_0_999px_rgba(15,23,42,0.28)]" />
+                  </div>
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    <Button
+                      type="button"
+                      onClick={captureSelfie}
+                      disabled={!cameraReady || validatingPhoto}
+                      className="h-11 rounded-lg bg-emerald-600 font-bold hover:bg-emerald-700"
+                      data-testid="attendance-capture-selfie-button"
+                    >
+                      <Camera className="h-4 w-4" strokeWidth={1.7} />
+                      {validatingPhoto ? "Memeriksa..." : "Ambil Selfie"}
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={stopCamera}
+                      className="h-11 rounded-lg border-slate-200 bg-white font-bold"
+                    >
+                      <X className="h-4 w-4" strokeWidth={1.7} />
+                      Tutup Kamera
+                    </Button>
+                  </div>
+                </div>
               ) : (
-                <>
-                  <span className="flex h-14 w-14 items-center justify-center rounded-full bg-white text-slate-500 shadow-sm transition group-hover:text-emerald-700">
-                    <Camera className="h-7 w-7" strokeWidth={1.7} />
+                <div className="flex min-h-56 flex-col items-center justify-center gap-4 p-5 text-center">
+                  <span className="flex h-14 w-14 items-center justify-center rounded-full bg-white text-emerald-700 shadow-sm">
+                    <ShieldCheck className="h-7 w-7" strokeWidth={1.7} />
                   </span>
-                  <span className="text-center text-sm font-medium text-slate-600">
-                    Klik untuk unggah foto (maks. 5MB)
-                  </span>
-                </>
+                  <div>
+                    <p className="font-bold text-slate-900">Wajib selfie kamera depan</p>
+                    <p className="mt-2 text-sm leading-6 text-slate-600">
+                      Galeri dan upload berkas dinonaktifkan. Ambil selfie di luar ruangan, wajah jelas, dan tersenyum.
+                    </p>
+                  </div>
+                  <Button
+                    type="button"
+                    onClick={startCamera}
+                    className="h-11 rounded-lg bg-emerald-600 font-bold hover:bg-emerald-700"
+                    data-testid="attendance-start-camera-button"
+                  >
+                    <Camera className="h-4 w-4" strokeWidth={1.7} />
+                    Buka Kamera Depan
+                  </Button>
+                </div>
               )}
-            </button>
-            <input
-              ref={fileRef}
-              type="file"
-              accept="image/jpeg,image/png,image/webp"
-              className="hidden"
-              data-testid="attendance-photo-input"
-              onChange={handlePhoto}
-            />
+            </div>
+            <canvas ref={canvasRef} className="hidden" />
+            {cameraError && (
+              <p className="text-xs font-semibold text-red-600" data-testid="attendance-camera-error">
+                {cameraError}
+              </p>
+            )}
+            <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold leading-5 text-amber-800">
+              Foto ID card, foto dari galeri, kamera belakang, ruangan gelap/tertutup, dan wajah tidak jelas akan ditolak.
+            </div>
             {photo && (
               <p className="text-xs text-slate-500" data-testid="attendance-photo-name">
                 {photo.name} - {(photo.size / 1024 / 1024).toFixed(2)} MB
