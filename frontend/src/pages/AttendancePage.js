@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState, useRef } from "react";
 import axios from "axios";
 import { toast } from "sonner";
-import { Camera, CalendarDays, ClipboardCheck, RefreshCw, ShieldCheck, User, X } from "lucide-react";
+import { Camera, CalendarDays, ClipboardCheck, MapPin, RefreshCw, ShieldCheck, User, X } from "lucide-react";
 import { API, formatApiError } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -14,6 +14,7 @@ export default function AttendancePage() {
   const [marketing, setMarketing] = useState([]);
   const [photo, setPhoto] = useState(null);
   const [preview, setPreview] = useState(null);
+  const [location, setLocation] = useState(null);
   const [cameraActive, setCameraActive] = useState(false);
   const [cameraReady, setCameraReady] = useState(false);
   const [cameraError, setCameraError] = useState("");
@@ -22,6 +23,23 @@ export default function AttendancePage() {
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
   const streamRef = useRef(null);
+
+  const getCurrentLocation = () =>
+    new Promise((resolve, reject) => {
+      if (!navigator.geolocation) {
+        reject(new Error("Browser tidak mendukung lokasi GPS"));
+        return;
+      }
+      navigator.geolocation.getCurrentPosition(
+        (position) => resolve(position.coords),
+        () => reject(new Error("Izin lokasi wajib diaktifkan")),
+        {
+          enableHighAccuracy: true,
+          timeout: 15000,
+          maximumAge: 0,
+        }
+      );
+    });
 
   const today = new Date();
   const tanggalLabel = today.toLocaleDateString("id-ID", {
@@ -113,6 +131,7 @@ export default function AttendancePage() {
       setCameraError("");
       setPhoto(null);
       setPreview(null);
+      setLocation(null);
       stopCamera();
       const stream = await getFrontCameraStream();
       const [track] = stream.getVideoTracks();
@@ -182,6 +201,11 @@ export default function AttendancePage() {
     }
     setValidatingPhoto(true);
     try {
+      const coords = await getCurrentLocation();
+      if (coords.accuracy && coords.accuracy > 150) {
+        toast.error("Akurasi lokasi terlalu rendah. Aktifkan GPS dan coba di area terbuka.");
+        return;
+      }
       const video = videoRef.current;
       const canvas = canvasRef.current;
       const size = 900;
@@ -215,8 +239,13 @@ export default function AttendancePage() {
           const file = new File([blob], `selfie-${Date.now()}.jpg`, { type: "image/jpeg" });
           setPhoto(file);
           setPreview(URL.createObjectURL(blob));
+          setLocation({
+            latitude: coords.latitude,
+            longitude: coords.longitude,
+            accuracy: coords.accuracy,
+          });
           stopCamera();
-          toast.success("Selfie diterima. Pastikan wajah tersenyum dan jelas.");
+          toast.success("Selfie dan lokasi diterima.");
         },
         "image/jpeg",
         0.86
@@ -229,6 +258,7 @@ export default function AttendancePage() {
   const retakePhoto = () => {
     setPhoto(null);
     setPreview(null);
+    setLocation(null);
     startCamera();
   };
 
@@ -246,16 +276,24 @@ export default function AttendancePage() {
       toast.error("Foto absensi wajib diunggah");
       return;
     }
+    if (!location) {
+      toast.error("Lokasi GPS wajib aktif sebelum mengirim absensi");
+      return;
+    }
     setSubmitting(true);
     try {
       const formData = new FormData();
       formData.append("name", matchedMarketing.name);
       formData.append("photo", photo);
+      formData.append("latitude", String(location.latitude));
+      formData.append("longitude", String(location.longitude));
+      formData.append("location_accuracy", String(location.accuracy || ""));
       await axios.post(`${API}/attendance`, formData);
       toast.success("Absensi berhasil dikirim. Terima kasih!");
       setName("");
       setPhoto(null);
       setPreview(null);
+      setLocation(null);
       fetchMarketing();
     } catch (err) {
       toast.error(formatApiError(err));
@@ -429,6 +467,15 @@ export default function AttendancePage() {
               <p className="text-xs text-slate-500" data-testid="attendance-photo-name">
                 {photo.name} - {(photo.size / 1024 / 1024).toFixed(2)} MB
               </p>
+            )}
+            {location && (
+              <div className="flex items-start gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold leading-5 text-emerald-800">
+                <MapPin className="mt-0.5 h-4 w-4 shrink-0" strokeWidth={1.7} />
+                <span>
+                  Lokasi terkunci: {location.latitude.toFixed(6)}, {location.longitude.toFixed(6)}
+                  {location.accuracy ? ` (akurasi ±${Math.round(location.accuracy)} m)` : ""}
+                </span>
+              </div>
             )}
           </div>
 

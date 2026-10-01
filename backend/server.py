@@ -17,6 +17,8 @@ import re
 import jwt
 import bcrypt
 import logging
+import requests
+from io import BytesIO
 
 ROOT_DIR = Path(__file__).parent
 UPLOAD_DIR = ROOT_DIR / "uploads"
@@ -111,6 +113,7 @@ def serialize_attendance(doc: dict) -> dict:
         "date": doc["date"],
         "day_name": doc["day_name"],
         "photo_url": doc.get("photo_url"),
+        "location": doc.get("location"),
         "created_at": doc.get("created_at"),
     }
 
@@ -150,14 +153,125 @@ async def require_registered_marketing(name: str) -> dict:
     return marketing
 
 
-async def save_photo(photo: UploadFile) -> str:
+def parse_location(latitude: str, longitude: str, accuracy: Optional[str]) -> dict:
+    try:
+        lat = float(latitude)
+        lng = float(longitude)
+        acc = float(accuracy) if accuracy not in (None, "") else None
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="Lokasi GPS tidak valid")
+    if lat < -90 or lat > 90 or lng < -180 or lng > 180:
+        raise HTTPException(status_code=400, detail="Koordinat GPS tidak valid")
+    if acc is not None and acc > 150:
+        raise HTTPException(status_code=400, detail="Akurasi lokasi terlalu rendah. Aktifkan GPS dan coba di area terbuka.")
+    return {"latitude": lat, "longitude": lng, "accuracy": acc}
+
+
+def reverse_geocode(lat: float, lng: float) -> str:
+    try:
+        response = requests.get(
+            "https://nominatim.openstreetmap.org/reverse",
+            params={"format": "jsonv2", "lat": lat, "lon": lng, "zoom": 18, "addressdetails": 1},
+            headers={"User-Agent": "AbsensiP24/1.0"},
+            timeout=4,
+        )
+        if response.ok:
+            data = response.json()
+            return (data.get("display_name") or "").strip()
+    except Exception:
+        return ""
+    return ""
+
+
+def load_watermark_font(size: int):
+    from PIL import ImageFont
+
+    for font_path in (
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+        "C:/Windows/Fonts/arial.ttf",
+    ):
+        try:
+            return ImageFont.truetype(font_path, size)
+        except Exception:
+            continue
+    return ImageFont.load_default()
+
+
+def wrap_text(draw, text: str, font, max_width: int) -> list[str]:
+    words = text.split()
+    lines = []
+    current = ""
+    for word in words:
+        candidate = f"{current} {word}".strip()
+        bbox = draw.textbbox((0, 0), candidate, font=font)
+        if bbox[2] - bbox[0] <= max_width or not current:
+            current = candidate
+        else:
+            lines.append(current)
+            current = word
+    if current:
+        lines.append(current)
+    return lines
+
+
+def add_photo_watermark(content: bytes, metadata: Optional[dict]) -> bytes:
+    if not metadata:
+        return content
+    from PIL import Image, ImageDraw, ImageOps
+
+    image = Image.open(BytesIO(content))
+    image = ImageOps.exif_transpose(image).convert("RGB")
+    draw = ImageDraw.Draw(image, "RGBA")
+    width, height = image.size
+    font_size = max(18, width // 34)
+    font = load_watermark_font(font_size)
+    small_font = load_watermark_font(max(15, width // 42))
+    padding = max(18, width // 45)
+    line_gap = max(6, width // 180)
+    max_text_width = width - padding * 2
+
+    lines = []
+    lines.append(f"Waktu server: {metadata['captured_at_label']}")
+    lines.append(f"GPS: {metadata['latitude']:.6f}, {metadata['longitude']:.6f}")
+    if metadata.get("accuracy") is not None:
+        lines.append(f"Akurasi: ±{metadata['accuracy']:.0f} meter")
+    if metadata.get("address"):
+        address_lines = wrap_text(draw, f"Lokasi: {metadata['address']}", small_font, max_text_width)
+        lines.extend(address_lines[:3])
+
+    line_heights = []
+    for index, line in enumerate(lines):
+        current_font = font if index < 3 else small_font
+        bbox = draw.textbbox((0, 0), line, font=current_font)
+        line_heights.append(bbox[3] - bbox[1])
+    box_height = padding * 2 + sum(line_heights) + line_gap * (len(lines) - 1)
+    y0 = max(0, height - box_height)
+    draw.rectangle([(0, y0), (width, height)], fill=(0, 0, 0, 172))
+
+    y = y0 + padding
+    for index, line in enumerate(lines):
+        current_font = font if index < 3 else small_font
+        draw.text((padding, y), line, font=current_font, fill=(255, 255, 255, 255))
+        y += line_heights[index] + line_gap
+
+    output = BytesIO()
+    image.save(output, format="JPEG", quality=88, optimize=True)
+    return output.getvalue()
+
+
+async def save_photo(photo: UploadFile, metadata: Optional[dict] = None) -> str:
     if photo.content_type not in ALLOWED_TYPES:
         raise HTTPException(status_code=400, detail="File harus berupa gambar (JPG/PNG/WebP)")
     content = await photo.read()
     if len(content) > MAX_PHOTO_SIZE:
         raise HTTPException(status_code=400, detail="Ukuran foto maksimal 5MB")
-    ext = os.path.splitext(photo.filename or "photo.jpg")[1].lower() or ".jpg"
-    filename = f"{uuid.uuid4()}{ext}"
+    try:
+        content = add_photo_watermark(content, metadata)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Foto tidak bisa diproses")
+    if len(content) > MAX_PHOTO_SIZE:
+        raise HTTPException(status_code=400, detail="Ukuran foto setelah diberi lokasi melebihi 5MB")
+    filename = f"{uuid.uuid4()}.jpg"
     (UPLOAD_DIR / filename).write_bytes(content)
     return f"/api/uploads/{filename}"
 
@@ -274,7 +388,13 @@ async def delete_marketing(marketing_id: str, admin=Depends(get_current_admin)):
 
 
 @api_router.post("/attendance", status_code=201)
-async def submit_attendance(name: str = Form(...), photo: UploadFile = File(...)):
+async def submit_attendance(
+    name: str = Form(...),
+    photo: UploadFile = File(...),
+    latitude: str = Form(...),
+    longitude: str = Form(...),
+    location_accuracy: Optional[str] = Form(None),
+):
     name = name.strip()
     if not name:
         raise HTTPException(status_code=400, detail="Nama lengkap wajib diisi")
@@ -284,13 +404,25 @@ async def submit_attendance(name: str = Form(...), photo: UploadFile = File(...)
     existing = await db.attendance.find_one({"name_lower": marketing["name_lower"], "date": date_str})
     if existing:
         raise HTTPException(status_code=409, detail="Anda sudah melakukan absensi hari ini")
-    photo_url = await save_photo(photo)
+    server_now = datetime.now(JAKARTA_TZ)
+    location = parse_location(latitude, longitude, location_accuracy)
+    address = reverse_geocode(location["latitude"], location["longitude"])
+    location.update(
+        {
+            "address": address,
+            "maps_url": f"https://maps.google.com/?q={location['latitude']:.6f},{location['longitude']:.6f}",
+            "captured_at": server_now.isoformat(),
+            "captured_at_label": server_now.strftime("%d %B %Y %H:%M:%S WIB"),
+        }
+    )
+    photo_url = await save_photo(photo, location)
     doc = {
         "name": marketing["name"],
         "name_lower": marketing["name_lower"],
         "date": date_str,
         "day_name": DAY_NAMES_ID[today.weekday()],
         "photo_url": photo_url,
+        "location": location,
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
     result = await db.attendance.insert_one(doc)
