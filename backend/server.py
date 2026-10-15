@@ -19,6 +19,7 @@ import bcrypt
 import logging
 import requests
 from io import BytesIO
+from marketing_profile import MarketingProfilePatch, profile_update, profile_values
 
 ROOT_DIR = Path(__file__).parent
 UPLOAD_DIR = ROOT_DIR / "uploads"
@@ -123,6 +124,15 @@ def serialize_marketing(doc: dict) -> dict:
         "id": str(doc["_id"]),
         "name": doc["name"],
         "created_at": doc.get("created_at"),
+    }
+
+
+def serialize_marketing_profile(doc: dict) -> dict:
+    return {
+        **serialize_marketing(doc),
+        "code": f"MKT-{str(doc['_id']).upper()}",
+        "profile": profile_values(doc),
+        "inventory_history": doc.get("inventory_history", []),
     }
 
 
@@ -328,13 +338,56 @@ async def list_marketing_public(q: Optional[str] = None):
 async def list_available_marketing(q: Optional[str] = None):
     today = today_jakarta().isoformat()
     attended_names = await db.attendance.distinct("name_lower", {"date": today})
-    query = {"name_lower": {"$nin": attended_names}}
+    query = {"name_lower": {"$nin": attended_names}, "profile.is_active": {"$ne": False}}
     if q:
         q = q.strip().lower()
         if q:
             query["name_lower"]["$regex"] = re.escape(q)
     docs = await db.marketing.find(query).sort("name", 1).to_list(1000)
     return [serialize_marketing(d) for d in docs]
+
+
+@api_router.get("/marketing/profiles")
+async def list_marketing_profiles(q: Optional[str] = None, admin=Depends(get_current_admin)):
+    query = {}
+    if q and q.strip():
+        query["name_lower"] = {"$regex": re.escape(q.strip().lower())}
+    docs = await db.marketing.find(query).sort("name", 1).to_list(1000)
+    return [serialize_marketing_profile(doc) for doc in docs]
+
+
+@api_router.patch("/marketing/{marketing_id}/profile")
+async def update_marketing_profile(
+    marketing_id: str, input: MarketingProfilePatch, admin=Depends(get_current_admin)
+):
+    try:
+        oid = ObjectId(marketing_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="ID tidak valid")
+    doc = await db.marketing.find_one({"_id": oid})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Data marketing tidak ditemukan")
+    values = profile_update(input)
+    if not values:
+        return serialize_marketing_profile(doc)
+    previous = profile_values(doc)["inventory"]
+    inventory_changes = {
+        key.rsplit(".", 1)[1]: value
+        for key, value in values.items()
+        if key.startswith("profile.inventory.") and previous.get(key.rsplit(".", 1)[1]) != value
+    }
+    now = datetime.now(timezone.utc).isoformat()
+    mutation = {"$set": {**values, "profile_updated_at": now}}
+    if inventory_changes:
+        mutation["$push"] = {"inventory_history": {
+            "at": now,
+            "by": admin.get("email", "Admin"),
+            "changes": inventory_changes,
+            "previous": {key: previous.get(key) for key in inventory_changes},
+        }}
+    await db.marketing.update_one({"_id": oid}, mutation)
+    updated = await db.marketing.find_one({"_id": oid})
+    return serialize_marketing_profile(updated)
 
 
 @api_router.post("/marketing", status_code=201)
@@ -399,6 +452,8 @@ async def submit_attendance(
     if not name:
         raise HTTPException(status_code=400, detail="Nama lengkap wajib diisi")
     marketing = await require_registered_marketing(name)
+    if (marketing.get("profile") or {}).get("is_active") is False:
+        raise HTTPException(status_code=403, detail="Marketing sudah nonaktif")
     today = today_jakarta()
     date_str = today.isoformat()
     existing = await db.attendance.find_one({"name_lower": marketing["name_lower"], "date": date_str})

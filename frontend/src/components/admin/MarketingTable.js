@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
-import { Pencil, Plus, Trash2, UsersRound } from "lucide-react";
+import { Eye, Pencil, Plus, UsersRound } from "lucide-react";
 import api, { formatApiError } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import MarketingProfileDialog from "./MarketingProfileDialog";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   Dialog,
   DialogContent,
@@ -26,49 +28,48 @@ export default function MarketingTable() {
   const [marketing, setMarketing] = useState([]);
   const [search, setSearch] = useState("");
   const [dialogOpen, setDialogOpen] = useState(false);
-  const [editItem, setEditItem] = useState(null);
+  const [selectedProfile, setSelectedProfile] = useState(null);
+  const [profileEditing, setProfileEditing] = useState(false);
   const [name, setName] = useState("");
   const [saving, setSaving] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
 
   const fetchMarketing = useCallback(async () => {
     try {
-      const { data } = await api.get("/marketing", { params: { q: search } });
+      const { data } = await api.get("/marketing/profiles");
       setMarketing(data);
+      setLoadError(false);
     } catch (err) {
+      setLoadError(true);
       toast.error(formatApiError(err));
+    } finally {
+      setLoading(false);
     }
-  }, [search]);
+  }, []);
 
   useEffect(() => {
     fetchMarketing();
   }, [fetchMarketing]);
 
   const openAdd = () => {
-    setEditItem(null);
     setName("");
     setDialogOpen(true);
   };
 
-  const openEdit = (item) => {
-    setEditItem(item);
-    setName(item.name);
-    setDialogOpen(true);
+  const openProfile = (item, editing) => {
+    setSelectedProfile(item);
+    setProfileEditing(editing);
   };
 
   const handleSave = async (e) => {
     e.preventDefault();
     setSaving(true);
     try {
-      if (editItem) {
-        await api.put(`/marketing/${editItem.id}`, { name });
-        toast.success("Nama marketing diperbarui");
-      } else {
-        await api.post("/marketing", { name });
-        toast.success("Nama marketing ditambahkan");
-      }
+      await api.post("/marketing", { name });
+      toast.success("Nama marketing ditambahkan");
       setDialogOpen(false);
       setName("");
-      setEditItem(null);
       fetchMarketing();
     } catch (err) {
       toast.error(formatApiError(err));
@@ -77,25 +78,14 @@ export default function MarketingTable() {
     }
   };
 
-  const handleDelete = async (item) => {
-    if (!window.confirm(`Hapus marketing "${item.name}"?`)) return;
-    try {
-      await api.delete(`/marketing/${item.id}`);
-      toast.success("Nama marketing dihapus");
-      fetchMarketing();
-    } catch (err) {
-      toast.error(formatApiError(err));
-    }
-  };
+  const keyword = search.trim().toLowerCase();
+  const filtered = marketing.filter((item) => [item.name, item.code, item.profile?.phone].some((value) => value?.toLowerCase().includes(keyword)));
 
   return (
     <div data-testid="marketing-table-section">
       <div className="mb-6 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
         <div>
-          <h2 className="text-xl font-extrabold tracking-normal text-slate-950">Nama Marketing</h2>
-          <p className="mt-1 text-sm text-slate-500">
-            Daftar ini menjadi sumber pencarian di form absensi.
-          </p>
+          <h2 className="text-xl font-extrabold tracking-normal text-slate-950">Marketing</h2>
         </div>
         <Button
           type="button"
@@ -116,56 +106,58 @@ export default function MarketingTable() {
           id="marketing-search"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          placeholder="Cari nama marketing"
+          placeholder="Cari nama, kode, atau nomor HP"
           className="h-11 rounded-lg border-slate-200 bg-white"
           data-testid="marketing-search-input"
         />
       </div>
 
+      <TooltipProvider>
       <div className="overflow-hidden rounded-lg border border-slate-200 bg-white">
-        <Table className="min-w-[560px]" data-testid="marketing-table">
+        <Table className="min-w-[800px]" data-testid="marketing-table">
           <TableHeader>
             <TableRow className="bg-slate-50 hover:bg-slate-50">
               <TableHead>Nama Marketing</TableHead>
+              <TableHead>Nomor HP</TableHead>
+              <TableHead>Bank / Rekening</TableHead>
+              <TableHead>Status</TableHead>
               <TableHead className="w-36 text-right">Aksi</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
-            {marketing.length === 0 ? (
+            {loading || loadError || filtered.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={2} className="py-12 text-center text-slate-500">
+                <TableCell colSpan={5} className="py-12 text-center text-slate-500">
                   <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-lg bg-slate-100 text-slate-400">
                     <UsersRound className="h-5 w-5" strokeWidth={1.7} />
                   </div>
-                  Belum ada nama marketing.
+                  {loading ? "Memuat profil..." : loadError ? "Profil belum bisa dimuat." : "Tidak ada marketing yang cocok."}
+                  {loadError && <Button type="button" variant="outline" className="ml-3" onClick={fetchMarketing}>Coba lagi</Button>}
                 </TableCell>
               </TableRow>
             ) : (
-              marketing.map((item) => (
+              filtered.map((item) => (
                 <TableRow className="hover:bg-emerald-50/40" key={item.id}>
-                  <TableCell className="font-bold text-slate-900">{item.name}</TableCell>
+                  <TableCell className="max-w-[260px] whitespace-normal break-words font-bold text-slate-900">{item.name}</TableCell>
+                  <TableCell>{item.profile?.phone || "Belum diisi"}</TableCell>
+                  <TableCell><p>{item.profile?.bank || "Belum diisi"}</p><p className="text-xs text-slate-500">{item.profile?.account_number ? `****${item.profile.account_number.replace(/ /g, "").slice(-4)}` : ""}</p></TableCell>
+                  <TableCell className={item.profile?.is_active === false ? "text-slate-500" : "font-semibold text-emerald-700"}>{item.profile?.is_active === false ? "Nonaktif" : "Aktif"}</TableCell>
                   <TableCell className="text-right">
                     <div className="flex justify-end gap-2">
+                      <Tooltip><TooltipTrigger asChild><Button type="button" variant="outline" size="icon" onClick={() => openProfile(item, false)} aria-label={`Lihat profil ${item.name}`} data-testid={`view-marketing-button-${item.id}`}><Eye className="h-4 w-4" /></Button></TooltipTrigger><TooltipContent>Lihat profil</TooltipContent></Tooltip>
+                      <Tooltip><TooltipTrigger asChild>
                       <Button
                         type="button"
                         variant="outline"
                         size="icon"
-                        onClick={() => openEdit(item)}
+                        onClick={() => openProfile(item, true)}
+                        aria-label={`Edit profil ${item.name}`}
                         className="rounded-lg border-slate-200 bg-white"
                         data-testid={`edit-marketing-button-${item.id}`}
                       >
                         <Pencil className="h-4 w-4" strokeWidth={1.7} />
                       </Button>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="icon"
-                        onClick={() => handleDelete(item)}
-                        className="rounded-lg border-slate-200 bg-white"
-                        data-testid={`delete-marketing-button-${item.id}`}
-                      >
-                        <Trash2 className="h-4 w-4 text-red-600" strokeWidth={1.7} />
-                      </Button>
+                      </TooltipTrigger><TooltipContent>Edit profil</TooltipContent></Tooltip>
                     </div>
                   </TableCell>
                 </TableRow>
@@ -174,11 +166,14 @@ export default function MarketingTable() {
           </TableBody>
         </Table>
       </div>
+      </TooltipProvider>
+
+      {selectedProfile && <MarketingProfileDialog key={selectedProfile.id} item={selectedProfile} initialEditing={profileEditing} onClose={() => setSelectedProfile(null)} onSaved={(updated) => setMarketing((items) => items.map((item) => item.id === updated.id ? updated : item))} />}
 
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent className="rounded-lg border-slate-200" data-testid="marketing-dialog">
           <DialogHeader>
-            <DialogTitle>{editItem ? "Edit Marketing" : "Tambah Marketing"}</DialogTitle>
+            <DialogTitle>Tambah Marketing</DialogTitle>
             <DialogDescription>
               Nama ini akan muncul sebagai pilihan di form absensi karyawan.
             </DialogDescription>
