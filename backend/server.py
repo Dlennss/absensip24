@@ -9,6 +9,7 @@ from starlette.concurrency import run_in_threadpool
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, ValidationError
 from bson import ObjectId
+from pymongo.errors import DuplicateKeyError
 from typing import Optional
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
@@ -21,7 +22,7 @@ import bcrypt
 import logging
 import requests
 from io import BytesIO
-from marketing_profile import MarketingProfilePatch, profile_update, profile_values
+from marketing_profile import MarketingProfilePatch, MarketingRegistrationProfile, profile_update, profile_values
 from ktp_images import normalize_ktp_image
 
 ROOT_DIR = Path(__file__).parent
@@ -423,6 +424,22 @@ async def upload_marketing_ktp(
         input = MarketingProfilePatch.model_validate_json(changes)
     except ValidationError:
         raise HTTPException(status_code=400, detail="Data profil tidak valid. Periksa kembali isian profil")
+    target, metadata = await save_private_ktp(photo, admin)
+    mutation = build_profile_mutation(doc, input, admin)
+    mutation["$set"]["ktp_photo"] = metadata
+    try:
+        result = await db.marketing.update_one({"_id": oid}, mutation)
+        if not result.matched_count:
+            raise HTTPException(status_code=404, detail="Data marketing tidak ditemukan")
+    except Exception:
+        target.unlink(missing_ok=True)
+        raise
+    # Retain replaced files; no existing KTP is deleted by an upload.
+    updated = await db.marketing.find_one({"_id": oid})
+    return serialize_marketing_profile(updated)
+
+
+async def save_private_ktp(photo: UploadFile, admin: dict):
     if photo.content_type not in ALLOWED_TYPES:
         raise HTTPException(status_code=400, detail="Gunakan gambar KTP JPG, PNG, atau WebP")
     content = await photo.read(MAX_PHOTO_SIZE + 1)
@@ -435,23 +452,14 @@ async def upload_marketing_ktp(
     PRIVATE_KTP_DIR.mkdir(parents=True, exist_ok=True)
     filename = f"{uuid.uuid4().hex}.jpg"
     target = PRIVATE_KTP_DIR / filename
-    target.write_bytes(normalized)
-    mutation = build_profile_mutation(doc, input, admin)
-    mutation["$set"]["ktp_photo"] = {
+    with target.open("xb") as output:
+        output.write(normalized)
+    metadata = {
         "filename": filename,
         "uploaded_at": datetime.now(timezone.utc).isoformat(),
         "uploaded_by": admin.get("email", "Admin"),
     }
-    try:
-        result = await db.marketing.update_one({"_id": oid}, mutation)
-        if not result.matched_count:
-            raise HTTPException(status_code=404, detail="Data marketing tidak ditemukan")
-    except Exception:
-        target.unlink(missing_ok=True)
-        raise
-    # Retain replaced files; no existing KTP is deleted by an upload.
-    updated = await db.marketing.find_one({"_id": oid})
-    return serialize_marketing_profile(updated)
+    return target, metadata
 
 
 @api_router.get("/marketing/{marketing_id}/ktp")
@@ -475,21 +483,47 @@ async def get_marketing_ktp(marketing_id: str, admin=Depends(get_current_admin))
 
 
 @api_router.post("/marketing", status_code=201)
-async def create_marketing(input: MarketingInput, admin=Depends(get_current_admin)):
-    name = input.name.strip()
+async def create_marketing(
+    name: str = Form(...),
+    profile: str = Form(...),
+    photo: UploadFile = File(...),
+    admin=Depends(get_current_admin),
+):
+    name = name.strip()
     if not name:
         raise HTTPException(status_code=400, detail="Nama marketing wajib diisi")
+    if len(name) > 150:
+        raise HTTPException(status_code=400, detail="Nama marketing maksimal 150 karakter")
+    try:
+        details = MarketingRegistrationProfile.model_validate_json(profile)
+    except ValidationError as error:
+        messages = "; ".join(issue["msg"] for issue in error.errors(include_url=False))
+        raise HTTPException(status_code=400, detail=f"Profil belum lengkap atau tidak valid: {messages}")
     existing = await find_marketing_by_name(name)
     if existing:
         raise HTTPException(status_code=409, detail="Nama marketing sudah ada")
+    target, metadata = await save_private_ktp(photo, admin)
     doc = {
         "name": name,
         "name_lower": name.lower(),
         "created_at": datetime.now(timezone.utc).isoformat(),
+        "profile": details.model_dump(),
+        "ktp_photo": metadata,
     }
-    result = await db.marketing.insert_one(doc)
+    # Record the initial handover against an empty inventory, not its saved copy.
+    initial_inventory = build_profile_mutation({}, details, admin).get("$push")
+    if initial_inventory:
+        doc["inventory_history"] = [initial_inventory["inventory_history"]]
+    try:
+        result = await db.marketing.insert_one(doc)
+    except DuplicateKeyError:
+        target.unlink(missing_ok=True)
+        raise HTTPException(status_code=409, detail="Nama marketing sudah ada")
+    except Exception:
+        target.unlink(missing_ok=True)
+        raise
     doc["_id"] = result.inserted_id
-    return serialize_marketing(doc)
+    return serialize_marketing_profile(doc)
 
 
 @api_router.put("/marketing/{marketing_id}")

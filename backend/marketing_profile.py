@@ -1,6 +1,6 @@
 from datetime import date
 
-from pydantic import BaseModel, ConfigDict, Field, StrictBool, field_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, field_validator, model_validator
 
 
 class InventoryPatch(BaseModel):
@@ -52,6 +52,38 @@ class MarketingProfilePatch(BaseModel):
         if value and not value.replace(" ", "").isdigit():
             raise ValueError("Nomor rekening hanya boleh berisi angka dan spasi")
         return value
+
+
+class MarketingRegistrationProfile(MarketingProfilePatch):
+    phone: str = Field(min_length=1, max_length=30)
+    joined_on: str = Field(min_length=1, max_length=10)
+    bank: str = Field(min_length=1, max_length=100)
+    account_number: str = Field(min_length=1, max_length=40)
+    account_holder: str = Field(min_length=1, max_length=150)
+
+    @field_validator("phone", "joined_on", "bank", "account_number", "account_holder")
+    @classmethod
+    def required_text(cls, value):
+        if not value.strip():
+            raise ValueError("Wajib diisi")
+        return value
+
+    @field_validator("phone")
+    @classmethod
+    def valid_phone(cls, value):
+        digits = "".join(char for char in value if char.isdigit())
+        if not 8 <= len(digits) <= 20 or any(char not in "+0123456789 ()-" for char in value):
+            raise ValueError("Nomor HP tidak valid")
+        return value
+
+    @model_validator(mode="after")
+    def inventory_dates(self):
+        inventory = self.inventory
+        if (inventory.uniforms or inventory.vest or inventory.id_card) and not inventory.received_on:
+            raise ValueError("Tanggal penyerahan wajib untuk perlengkapan yang diterima")
+        if inventory.returned_on and (not inventory.received_on or inventory.returned_on < inventory.received_on):
+            raise ValueError("Tanggal pengembalian harus setelah tanggal penyerahan")
+        return self
 
 
 def profile_values(doc):

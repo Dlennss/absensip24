@@ -8,14 +8,6 @@ import { Label } from "@/components/ui/label";
 import MarketingProfileDialog from "./MarketingProfileDialog";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import {
   Table,
   TableBody,
   TableCell,
@@ -30,8 +22,6 @@ export default function MarketingTable() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [selectedProfile, setSelectedProfile] = useState(null);
   const [profileEditing, setProfileEditing] = useState(false);
-  const [name, setName] = useState("");
-  const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
 
@@ -53,29 +43,12 @@ export default function MarketingTable() {
   }, [fetchMarketing]);
 
   const openAdd = () => {
-    setName("");
     setDialogOpen(true);
   };
 
   const openProfile = (item, editing) => {
     setSelectedProfile(item);
     setProfileEditing(editing);
-  };
-
-  const handleSave = async (e) => {
-    e.preventDefault();
-    setSaving(true);
-    try {
-      await api.post("/marketing", { name });
-      toast.success("Nama marketing ditambahkan");
-      setDialogOpen(false);
-      setName("");
-      fetchMarketing();
-    } catch (err) {
-      toast.error(formatApiError(err));
-    } finally {
-      setSaving(false);
-    }
   };
 
   const keyword = search.trim().toLowerCase();
@@ -170,42 +143,11 @@ export default function MarketingTable() {
 
       {selectedProfile && <MarketingProfileDialog key={selectedProfile.id} item={selectedProfile} initialEditing={profileEditing} onClose={() => setSelectedProfile(null)} onSaved={(updated) => setMarketing((items) => items.map((item) => item.id === updated.id ? updated : item))} />}
 
-      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent className="rounded-lg border-slate-200" data-testid="marketing-dialog">
-          <DialogHeader>
-            <DialogTitle>Tambah Marketing</DialogTitle>
-            <DialogDescription>
-              Nama ini akan muncul sebagai pilihan di form absensi karyawan.
-            </DialogDescription>
-          </DialogHeader>
-          <form onSubmit={handleSave} className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="marketing-name" className="font-bold text-slate-900">
-                Nama Marketing
-              </Label>
-              <Input
-                id="marketing-name"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                placeholder="Contoh: asep"
-                required
-                className="h-11 rounded-lg border-slate-200"
-                data-testid="marketing-name-input"
-              />
-            </div>
-            <DialogFooter>
-              <Button
-                type="submit"
-                disabled={saving}
-                className="rounded-lg bg-emerald-600 font-bold hover:bg-emerald-700"
-                data-testid="marketing-save-button"
-              >
-                {saving ? "Menyimpan..." : "Simpan"}
-              </Button>
-            </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
+      {dialogOpen && <MarketingProfileDialog initialEditing onClose={() => setDialogOpen(false)} onSaved={(created) => {
+        setMarketing((items) => [...items, created].sort((a, b) => a.name.localeCompare(b.name)));
+        setSearch("");
+        setDialogOpen(false);
+      }} />}
     </div>
   );
 }

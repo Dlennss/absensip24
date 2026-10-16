@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 const ALLOWED_TYPES = ["image/jpeg", "image/png", "image/webp"];
 const ACCEPT = ALLOWED_TYPES.join(",");
 
-export default function KtpPhotoInput({ photo, file, onChange, editing, disabled }) {
+export default function KtpPhotoInput({ photo, file, onChange, editing, disabled, required = false }) {
   const cameraRef = useRef(null);
   const galleryRef = useRef(null);
   const [preview, setPreview] = useState("");
@@ -61,7 +61,7 @@ export default function KtpPhotoInput({ photo, file, onChange, editing, disabled
 
   return (
     <section className="space-y-3 border-t border-slate-200 pt-4" data-testid="ktp-photo-section">
-      <h3 className="text-sm font-bold">Foto KTP</h3>
+      <h3 className="text-sm font-bold">Foto KTP{required ? " (wajib)" : ""}</h3>
       <div className="flex min-h-36 items-center justify-center overflow-hidden rounded-lg border border-slate-200 bg-slate-50 p-3">
         {preview ? <img src={preview} alt="Foto KTP marketing" className="max-h-72 w-full object-contain" data-testid="ktp-photo-preview" /> : (
           <p className="text-sm text-slate-500">{loading ? "Memuat foto KTP..." : photo ? "Foto KTP belum dapat ditampilkan" : "Belum ada foto KTP"}</p>
