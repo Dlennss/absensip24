@@ -7,6 +7,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import KtpPhotoInput from "./KtpPhotoInput";
 
 const inventoryLabels = {
   uniforms: "Jumlah seragam", vest: "Rompi", id_card: "ID card", ktp_verified: "KTP diverifikasi",
@@ -25,11 +26,14 @@ export default function MarketingProfileDialog({ item, initialEditing, onClose, 
   const [saving, setSaving] = useState(false);
   const [history, setHistory] = useState(item.inventory_history || []);
   const [baseline, setBaseline] = useState(original);
+  const [ktpPhoto, setKtpPhoto] = useState(item.ktp_photo || null);
+  const [ktpFile, setKtpFile] = useState(null);
   const change = (key, value) => setProfile((current) => ({ ...current, [key]: value }));
   const changeInventory = (key, value) => setProfile((current) => ({ ...current, inventory: { ...current.inventory, [key]: value } }));
 
   const save = async (event) => {
     event.preventDefault();
+    if (saving) return;
     const changes = {};
     Object.keys(baseline).filter((key) => key !== "inventory").forEach((key) => {
       if (profile[key] !== baseline[key]) changes[key] = profile[key];
@@ -39,13 +43,24 @@ export default function MarketingProfileDialog({ item, initialEditing, onClose, 
       if (profile.inventory[key] !== baseline.inventory[key]) inventory[key] = profile.inventory[key];
     });
     if (Object.keys(inventory).length) changes.inventory = inventory;
-    if (!Object.keys(changes).length) { setEditing(false); return; }
+    if (!Object.keys(changes).length && !ktpFile) { setEditing(false); return; }
     setSaving(true);
     try {
-      const { data } = await api.patch(`/marketing/${item.id}/profile`, changes);
+      let response;
+      if (ktpFile) {
+        const formData = new FormData();
+        formData.append("photo", ktpFile);
+        formData.append("changes", JSON.stringify(changes));
+        response = await api.put(`/marketing/${item.id}/ktp`, formData);
+      } else {
+        response = await api.patch(`/marketing/${item.id}/profile`, changes);
+      }
+      const { data } = response;
       setProfile(data.profile);
       setBaseline(data.profile);
       setHistory(data.inventory_history || []);
+      setKtpPhoto(data.ktp_photo || null);
+      setKtpFile(null);
       setEditing(false);
       onSaved(data);
       toast.success("Profil marketing disimpan");
@@ -100,7 +115,7 @@ export default function MarketingProfileDialog({ item, initialEditing, onClose, 
               <div className="space-y-2"><Label htmlFor="profile-uniforms">Jumlah seragam diterima</Label>
                 {editing ? <Input id="profile-uniforms" type="number" min="0" max="100" step="1" required value={profile.inventory.uniforms} onChange={(event) => changeInventory("uniforms", event.target.value === "" ? "" : Number(event.target.value))} /> : <p className="text-sm">{profile.inventory.uniforms} buah</p>}
               </div>
-              {["vest", "id_card", "ktp_verified"].map((key) => <div key={key} className="flex items-center gap-2">
+              {["vest", "id_card"].map((key) => <div key={key} className="flex items-center gap-2">
                 <Checkbox id={`inventory-${key}`} checked={profile.inventory[key]} disabled={!editing} onCheckedChange={(checked) => changeInventory(key, checked === true)} />
                 <Label htmlFor={`inventory-${key}`}>{inventoryLabels[key]}</Label>
               </div>)}
@@ -113,6 +128,7 @@ export default function MarketingProfileDialog({ item, initialEditing, onClose, 
               {editing ? <textarea id="inventory-note" maxLength={2000} rows={3} value={profile.inventory.note} onChange={(event) => changeInventory("note", event.target.value)} className="w-full rounded-md border border-slate-200 bg-white p-3 text-sm" /> : <p className="whitespace-pre-wrap break-words text-sm text-slate-700">{profile.inventory.note || "Belum ada catatan"}</p>}
             </div>
           </section>
+          <KtpPhotoInput photo={ktpPhoto} file={ktpFile} onChange={setKtpFile} editing={editing} disabled={saving} />
           {history.length > 0 && <section className="space-y-3 border-t border-slate-200 pt-4">
             <h3 className="text-sm font-bold">Riwayat Inventori</h3>
             <ol className="space-y-3">{[...history].reverse().map((entry, index) => <li key={`${entry.at}-${index}`} className="border-l-2 border-emerald-200 pl-3 text-sm">
@@ -121,7 +137,7 @@ export default function MarketingProfileDialog({ item, initialEditing, onClose, 
             </li>)}</ol>
           </section>}
           {editing && <div className="flex justify-end gap-2 border-t border-slate-200 pt-4">
-            <Button type="button" variant="outline" disabled={saving} onClick={() => { setProfile(baseline); setEditing(false); }}>Batal</Button>
+            <Button type="button" variant="outline" disabled={saving} onClick={() => { setProfile(baseline); setKtpFile(null); setEditing(false); }}>Batal</Button>
             <Button type="submit" disabled={saving} className="bg-emerald-600 hover:bg-emerald-700"><Save className="h-4 w-4" />{saving ? "Menyimpan..." : "Simpan Profil"}</Button>
           </div>}
         </form>

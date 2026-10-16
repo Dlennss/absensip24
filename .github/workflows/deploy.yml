@@ -74,6 +74,7 @@ jobs:
               --exclude ".env" \
               --exclude ".venv" \
               --exclude "uploads" \
+              --exclude "uploads-private" \
               /tmp/absensip24-deploy/backend/ "$BACKEND_DIR"/
             sudo rsync -a --delete /tmp/absensip24-deploy/frontend/ "$FRONTEND_DIR"/
 

@@ -66,6 +66,7 @@ agenthub/agents/youtube/db
 .mongo-data/
 .mongo-log/
 backend/uploads/*
+backend/uploads-private/
 
 # Archive files and large assets
 **/*.zip

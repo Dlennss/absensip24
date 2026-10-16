@@ -4,8 +4,10 @@ load_dotenv()
 from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request, UploadFile, File, Form
 from starlette.middleware.cors import CORSMiddleware
 from starlette.staticfiles import StaticFiles
+from starlette.responses import FileResponse
+from starlette.concurrency import run_in_threadpool
 from motor.motor_asyncio import AsyncIOMotorClient
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 from bson import ObjectId
 from typing import Optional
 from pathlib import Path
@@ -20,10 +22,12 @@ import logging
 import requests
 from io import BytesIO
 from marketing_profile import MarketingProfilePatch, profile_update, profile_values
+from ktp_images import normalize_ktp_image
 
 ROOT_DIR = Path(__file__).parent
 UPLOAD_DIR = ROOT_DIR / "uploads"
 UPLOAD_DIR.mkdir(exist_ok=True)
+PRIVATE_KTP_DIR = ROOT_DIR / "uploads-private" / "ktp"
 
 MAX_PHOTO_SIZE = 5 * 1024 * 1024
 ALLOWED_TYPES = {"image/jpeg", "image/png", "image/jpg", "image/webp"}
@@ -128,11 +132,16 @@ def serialize_marketing(doc: dict) -> dict:
 
 
 def serialize_marketing_profile(doc: dict) -> dict:
+    ktp = doc.get("ktp_photo")
     return {
         **serialize_marketing(doc),
         "code": f"MKT-{str(doc['_id']).upper()}",
         "profile": profile_values(doc),
         "inventory_history": doc.get("inventory_history", []),
+        "ktp_photo": {
+            "url": f"/api/marketing/{doc['_id']}/ktp",
+            "uploaded_at": ktp.get("uploaded_at"),
+        } if ktp else None,
     }
 
 
@@ -370,6 +379,14 @@ async def update_marketing_profile(
     values = profile_update(input)
     if not values:
         return serialize_marketing_profile(doc)
+    mutation = build_profile_mutation(doc, input, admin)
+    await db.marketing.update_one({"_id": oid}, mutation)
+    updated = await db.marketing.find_one({"_id": oid})
+    return serialize_marketing_profile(updated)
+
+
+def build_profile_mutation(doc: dict, input: MarketingProfilePatch, admin: dict) -> dict:
+    values = profile_update(input)
     previous = profile_values(doc)["inventory"]
     inventory_changes = {
         key.rsplit(".", 1)[1]: value
@@ -385,9 +402,76 @@ async def update_marketing_profile(
             "changes": inventory_changes,
             "previous": {key: previous.get(key) for key in inventory_changes},
         }}
-    await db.marketing.update_one({"_id": oid}, mutation)
+    return mutation
+
+
+@api_router.put("/marketing/{marketing_id}/ktp")
+async def upload_marketing_ktp(
+    marketing_id: str,
+    photo: UploadFile = File(...),
+    changes: str = Form("{}"),
+    admin=Depends(get_current_admin),
+):
+    try:
+        oid = ObjectId(marketing_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="ID tidak valid")
+    doc = await db.marketing.find_one({"_id": oid})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Data marketing tidak ditemukan")
+    try:
+        input = MarketingProfilePatch.model_validate_json(changes)
+    except ValidationError:
+        raise HTTPException(status_code=400, detail="Data profil tidak valid. Periksa kembali isian profil")
+    if photo.content_type not in ALLOWED_TYPES:
+        raise HTTPException(status_code=400, detail="Gunakan gambar KTP JPG, PNG, atau WebP")
+    content = await photo.read(MAX_PHOTO_SIZE + 1)
+    if len(content) > MAX_PHOTO_SIZE:
+        raise HTTPException(status_code=400, detail="Ukuran foto KTP maksimal 5MB")
+    try:
+        normalized = await run_in_threadpool(normalize_ktp_image, content)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error))
+    PRIVATE_KTP_DIR.mkdir(parents=True, exist_ok=True)
+    filename = f"{uuid.uuid4().hex}.jpg"
+    target = PRIVATE_KTP_DIR / filename
+    target.write_bytes(normalized)
+    mutation = build_profile_mutation(doc, input, admin)
+    mutation["$set"]["ktp_photo"] = {
+        "filename": filename,
+        "uploaded_at": datetime.now(timezone.utc).isoformat(),
+        "uploaded_by": admin.get("email", "Admin"),
+    }
+    try:
+        result = await db.marketing.update_one({"_id": oid}, mutation)
+        if not result.matched_count:
+            raise HTTPException(status_code=404, detail="Data marketing tidak ditemukan")
+    except Exception:
+        target.unlink(missing_ok=True)
+        raise
+    # Retain replaced files; no existing KTP is deleted by an upload.
     updated = await db.marketing.find_one({"_id": oid})
     return serialize_marketing_profile(updated)
+
+
+@api_router.get("/marketing/{marketing_id}/ktp")
+async def get_marketing_ktp(marketing_id: str, admin=Depends(get_current_admin)):
+    try:
+        oid = ObjectId(marketing_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="ID tidak valid")
+    doc = await db.marketing.find_one({"_id": oid})
+    photo = doc.get("ktp_photo") if doc else None
+    filename = photo.get("filename", "") if photo else ""
+    if not re.fullmatch(r"[a-f0-9]{32}\.jpg", filename):
+        raise HTTPException(status_code=404, detail="Foto KTP belum tersedia")
+    path = PRIVATE_KTP_DIR / filename
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="Foto KTP belum tersedia")
+    return FileResponse(path, media_type="image/jpeg", headers={
+        "Cache-Control": "no-store, private",
+        "X-Content-Type-Options": "nosniff",
+    })
 
 
 @api_router.post("/marketing", status_code=201)
