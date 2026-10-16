@@ -145,10 +145,10 @@ export default function MarketingProfileDialog({ item, initialEditing, onClose, 
                 <Checkbox id={`inventory-${key}`} checked={profile.inventory[key]} disabled={!editing} onCheckedChange={(checked) => changeInventory(key, checked === true)} />
                 <Label htmlFor={`inventory-${key}`}>{inventoryLabels[key]}</Label>
               </div>)}
-              {["received_on", "returned_on"].map((key) => <div className="space-y-2" key={key}>
-                <Label htmlFor={`inventory-${key}`}>{inventoryLabels[key]}</Label>
-                {editing ? <Input id={`inventory-${key}`} type="date" value={profile.inventory[key]} required={creating && key === "received_on" && Boolean(profile.inventory.uniforms || profile.inventory.vest || profile.inventory.id_card)} min={key === "returned_on" ? profile.inventory.received_on || undefined : undefined} onChange={(event) => changeInventory(key, event.target.value)} /> : <p className="text-sm">{dateLabel(profile.inventory[key])}</p>}
-              </div>)}
+              <div className="space-y-2">
+                <Label htmlFor="inventory-received_on">Tanggal penyerahan</Label>
+                {editing ? <Input id="inventory-received_on" type="date" value={profile.inventory.received_on} required={creating && Boolean(profile.inventory.uniforms || profile.inventory.vest || profile.inventory.id_card)} onChange={(event) => changeInventory("received_on", event.target.value)} /> : <p className="text-sm">{dateLabel(profile.inventory.received_on)}</p>}
+              </div>
             </div>
             <div className="space-y-2"><Label htmlFor="inventory-note">Catatan serah-terima</Label>
               {editing ? <textarea id="inventory-note" maxLength={2000} rows={3} value={profile.inventory.note} onChange={(event) => changeInventory("note", event.target.value)} className="w-full rounded-md border border-slate-200 bg-white p-3 text-sm" /> : <p className="whitespace-pre-wrap break-words text-sm text-slate-700">{profile.inventory.note || "Belum ada catatan"}</p>}
