@@ -598,7 +598,14 @@ async def submit_attendance(
         "location": location,
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
-    result = await db.attendance.insert_one(doc)
+    try:
+        result = await db.attendance.insert_one(doc)
+    except DuplicateKeyError:
+        try:
+            (UPLOAD_DIR / Path(photo_url).name).unlink(missing_ok=True)
+        except OSError:
+            logger.warning("Unable to remove unused attendance photo after duplicate submission")
+        raise HTTPException(status_code=409, detail="Anda sudah melakukan absensi hari ini")
     doc["_id"] = result.inserted_id
     return serialize_attendance(doc)
 

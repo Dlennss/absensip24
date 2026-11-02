@@ -32,7 +32,14 @@ export default function AttendancePage() {
       }
       navigator.geolocation.getCurrentPosition(
         (position) => resolve(position.coords),
-        () => reject(new Error("Izin lokasi wajib diaktifkan")),
+        (error) => {
+          const messages = {
+            1: "Izin lokasi ditolak. Aktifkan izin lokasi untuk situs ini lalu coba lagi.",
+            2: "Lokasi GPS belum tersedia. Aktifkan GPS dan coba lagi di area terbuka.",
+            3: "Pencarian lokasi terlalu lama. Coba lagi dengan GPS aktif.",
+          };
+          reject(new Error(messages[error.code] || "Lokasi GPS tidak dapat dibaca. Periksa pengaturan lokasi lalu coba lagi."));
+        },
         {
           enableHighAccuracy: true,
           timeout: 15000,
@@ -250,6 +257,8 @@ export default function AttendancePage() {
         "image/jpeg",
         0.86
       );
+    } catch (error) {
+      toast.error(error?.message || "Selfie gagal diambil. Periksa izin kamera dan lokasi lalu coba lagi.");
     } finally {
       setValidatingPhoto(false);
     }
