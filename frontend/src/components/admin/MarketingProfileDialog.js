@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import KtpPhotoInput from "./KtpPhotoInput";
 
@@ -19,8 +20,8 @@ const dateLabel = (value) => value ? new Date(`${value}T00:00:00`).toLocaleDateS
 export default function MarketingProfileDialog({ item, initialEditing, onClose, onSaved }) {
   const creating = !item?.id;
   const original = {
-    phone: "", joined_on: "", is_active: true, bank: "", account_number: "", account_holder: "",
-    ...item?.profile, inventory: { ...emptyInventory, ...item?.profile?.inventory },
+    phone: "", joined_on: "", is_active: true, bank: "", account_number: "", account_holder: "", ptkp_by_year: {},
+    ...item?.profile, ptkp_by_year: { ...item?.profile?.ptkp_by_year }, inventory: { ...emptyInventory, ...item?.profile?.inventory },
   };
   const [name, setName] = useState(item?.name || "");
   const [profile, setProfile] = useState(original);
@@ -31,8 +32,13 @@ export default function MarketingProfileDialog({ item, initialEditing, onClose, 
   const [ktpPhoto, setKtpPhoto] = useState(item?.ktp_photo || null);
   const [ktpFile, setKtpFile] = useState(null);
   const [ktpError, setKtpError] = useState("");
+  const [ptkpYear, setPtkpYear] = useState(String(new Date().getFullYear()));
   const change = (key, value) => setProfile((current) => ({ ...current, [key]: value }));
   const changeInventory = (key, value) => setProfile((current) => ({ ...current, inventory: { ...current.inventory, [key]: value } }));
+  const changePtkpStatus = (status) => setProfile((current) => ({
+    ...current,
+    ptkp_by_year: { ...current.ptkp_by_year, [ptkpYear]: status },
+  }));
 
   const save = async (event) => {
     event.preventDefault();
@@ -43,6 +49,10 @@ export default function MarketingProfileDialog({ item, initialEditing, onClose, 
     }
     if (creating && !name.trim()) {
       toast.error("Nama marketing wajib diisi");
+      return;
+    }
+    if (creating && !profile.ptkp_by_year[String(new Date().getFullYear())]) {
+      toast.error("Status PTKP wajib dipilih untuk menghitung PPh 21 otomatis.");
       return;
     }
     const changes = {};
@@ -105,7 +115,7 @@ export default function MarketingProfileDialog({ item, initialEditing, onClose, 
       <DialogContent className="max-h-[90dvh] max-w-2xl overflow-y-auto rounded-lg" data-testid={creating ? "marketing-dialog" : "marketing-profile-dialog"}>
         <DialogHeader>
           <DialogTitle className="break-words pr-6">{creating ? "Tambah Marketing" : item.name}</DialogTitle>
-          <DialogDescription className="break-all">{creating ? "Data diri, rekening, dan foto KTP wajib diisi." : item.code}</DialogDescription>
+          <DialogDescription className="break-all">{creating ? "Data diri, status PTKP tahun ini, rekening, dan foto KTP wajib diisi." : item.code}</DialogDescription>
         </DialogHeader>
         <form onSubmit={save} className="min-w-0 space-y-5">
           {creating && <div className="space-y-2">
@@ -123,6 +133,24 @@ export default function MarketingProfileDialog({ item, initialEditing, onClose, 
             <div className="grid gap-4 sm:grid-cols-2">
               {field("phone", "Nomor HP", { type: "tel", maxLength: 30, pattern: creating ? "\\+?[0-9 ]{8,30}" : undefined })}
               {field("joined_on", "Tanggal bergabung", { type: "date" })}
+              <div className="min-w-0 space-y-2">
+                <Label htmlFor="profile-ptkp-year" className="text-sm font-semibold">Status PTKP per tahun</Label>
+                {editing ? <div className="grid grid-cols-[112px_minmax(0,1fr)] gap-2">
+                  <Input id="profile-ptkp-year" aria-label="Tahun pajak PTKP" type="number" min="2000" max="2100" step="1" value={ptkpYear} onChange={(event) => setPtkpYear(event.target.value)} />
+                  <Select value={profile.ptkp_by_year[ptkpYear] || undefined} onValueChange={changePtkpStatus}>
+                    <SelectTrigger aria-label="Status PTKP" data-testid="marketing-ptkp-status">
+                      <SelectValue placeholder="Pilih status PTKP" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {["TK/0", "TK/1", "TK/2", "TK/3", "K/0", "K/1", "K/2", "K/3"].map((value) => <SelectItem key={value} value={value}>{value}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div> : <div className="text-sm text-slate-700">
+                  {Object.entries(profile.ptkp_by_year).sort(([a], [b]) => a.localeCompare(b)).map(([year, status]) => <p key={year}>{year}: {status}</p>)}
+                  {!Object.keys(profile.ptkp_by_year).length && <p>Belum diisi</p>}
+                </div>}
+                <p className="text-xs leading-5 text-slate-500">TK = tidak kawin, K = kawin; angka menunjukkan jumlah tanggungan pada awal tahun pajak.</p>
+              </div>
             </div>
             {editing && <div className="flex items-center gap-2"><Checkbox id="profile-active" checked={profile.is_active} onCheckedChange={(checked) => change("is_active", checked === true)} /><Label htmlFor="profile-active">Marketing aktif</Label></div>}
           </section>

@@ -1,10 +1,8 @@
 import { useEffect, useState } from "react";
-import { Printer, ReceiptText, Save } from "lucide-react";
+import { Printer, ReceiptText } from "lucide-react";
 import { toast } from "sonner";
 import api, { formatApiError, formatRupiah } from "@/lib/api";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import {
   Dialog,
   DialogContent,
@@ -39,66 +37,62 @@ function printPayslip(slip) {
   }
 
   const earningRows = [
-    { label: `Gaji kehadiran (${slip.attendance_days} hari)`, amount: slip.attendance_pay },
+    { label: "Gaji pokok", amount: slip.attendance_pay },
     ...slip.earnings,
   ];
   const deductionRows = [
     ...slip.deductions,
-    { label: "PPh Pasal 21", amount: slip.pph21_amount },
+    { label: "Potongan Kasbon", amount: slip.cash_advance_deduction },
+    { label: "Potongan Tidak Masuk Kerja", amount: slip.absence_deduction },
   ];
+  const taxRow = { label: `PPh Pasal 21 · TER ${slip.pph21_category} (${slip.pph21_rate_percent}%)`, amount: slip.pph21_amount };
   const rows = (items) => items.map((item) => `
     <tr><td>${escapeHtml(item.label)}</td><td class="amount">${formatRupiah(item.amount)}</td></tr>
   `).join("");
-  const printedAt = new Date().toLocaleString("id-ID", { dateStyle: "long", timeStyle: "short" });
+  const absenceNotes = slip.absence_notes.length ? slip.absence_notes.join("; ") : "Tidak ada keterangan";
 
   printWindow.document.write(`<!doctype html>
     <html lang="id">
       <head>
         <meta charset="utf-8" />
-        <title>Slip Gaji ${escapeHtml(slip.name)} - ${escapeHtml(monthLabel(slip.month))}</title>
+        <title>Rincian Penghasilan Karyawan - ${escapeHtml(monthLabel(slip.month))}</title>
         <style>
           @page { size: A4; margin: 16mm; }
           * { box-sizing: border-box; }
           body { margin: 0; color: #14211e; font: 14px Arial, sans-serif; }
-          header { display: flex; justify-content: space-between; gap: 24px; padding-bottom: 18px; border-bottom: 2px solid #087f5b; }
-          h1 { margin: 0; font-size: 24px; }
-          .subtitle, .muted { margin: 6px 0 0; color: #64748b; }
+          header { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; padding-bottom: 18px; border-bottom: 2px solid #087f5b; }
+          .company { margin-bottom: 8px; color: #087f5b; font-size: 13px; font-weight: 700; }
+          h1 { max-width: 520px; margin: 0; font-size: 21px; line-height: 1.3; }
           .period { text-align: right; font-weight: 700; }
-          .identity { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 32px; padding: 20px 0; }
-          .identity span { display: block; margin-bottom: 4px; color: #64748b; font-size: 12px; }
-          .section-title { margin: 18px 0 8px; font-size: 13px; text-transform: uppercase; }
+          .section-title { margin: 22px 0 8px; font-size: 13px; text-transform: uppercase; }
           table { width: 100%; border-collapse: collapse; }
           td { padding: 9px 8px; border-bottom: 1px solid #e2e8f0; }
           .amount { width: 34%; text-align: right; white-space: nowrap; }
+          .description td { color: #475569; line-height: 1.5; }
           .summary { margin-top: 18px; margin-left: auto; width: min(100%, 360px); }
           .summary td { border: 0; }
           .net td { border-top: 2px solid #087f5b; color: #087f5b; font-size: 17px; font-weight: 700; }
-          .note { margin-top: 22px; padding-top: 12px; border-top: 1px solid #e2e8f0; color: #64748b; font-size: 11px; }
           @media print { body { -webkit-print-color-adjust: exact; print-color-adjust: exact; } }
         </style>
       </head>
       <body>
         <header>
-          <div><h1>SLIP GAJI</h1><p class="subtitle">Rincian penghasilan dan potongan marketing</p></div>
+          <div><div class="company">PT MITRA PULSA NASIONAL</div><h1>RINCIAN PENGHASILAN KARYAWAN</h1></div>
           <div class="period">Periode<br />${escapeHtml(monthLabel(slip.month))}</div>
         </header>
-        <section class="identity">
-          <div><span>Nama marketing</span><strong>${escapeHtml(slip.name)}</strong></div>
-          <div><span>Hari hadir</span><strong>${slip.attendance_days} hari</strong></div>
-        </section>
         <h2 class="section-title">Pendapatan</h2>
         <table><tbody>${rows(earningRows)}
           <tr><td><strong>Total pendapatan</strong></td><td class="amount"><strong>${formatRupiah(slip.gross_pay)}</strong></td></tr>
         </tbody></table>
         <h2 class="section-title">Potongan</h2>
         <table><tbody>${rows(deductionRows)}
+          <tr class="description"><td colspan="2"><strong>Keterangan:</strong> ${escapeHtml(absenceNotes)}</td></tr>
+          ${rows([taxRow])}
           <tr><td><strong>Total potongan</strong></td><td class="amount"><strong>${formatRupiah(slip.total_deductions)}</strong></td></tr>
         </tbody></table>
         <table class="summary"><tbody>
           <tr class="net"><td>Gaji bersih diterima</td><td class="amount">${formatRupiah(slip.net_pay)}</td></tr>
         </tbody></table>
-        ${slip.pph21_note ? `<p class="muted">Catatan PPh 21: ${escapeHtml(slip.pph21_note)}</p>` : ""}
-        <p class="note">Dicetak ${escapeHtml(printedAt)}. Nominal PPh 21 pada slip ini dicatat oleh admin dan bukan hasil penghitungan pajak otomatis.</p>
         <script>window.addEventListener("load", () => window.print());</script>
       </body>
     </html>`);
@@ -108,9 +102,6 @@ function printPayslip(slip) {
 export default function PayrollSlipDialog({ marketing, month, onClose }) {
   const [slip, setSlip] = useState(null);
   const [loading, setLoading] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [pph21Amount, setPph21Amount] = useState("");
-  const [pph21Note, setPph21Note] = useState("");
 
   useEffect(() => {
     let active = true;
@@ -122,8 +113,6 @@ export default function PayrollSlipDialog({ marketing, month, onClose }) {
       .then(({ data }) => {
         if (!active) return;
         setSlip(data);
-        setPph21Amount(data.pph21_recorded ? String(data.pph21_amount) : "");
-        setPph21Note(data.pph21_note || "");
       })
       .catch((error) => {
         if (active) toast.error(formatApiError(error));
@@ -135,45 +124,16 @@ export default function PayrollSlipDialog({ marketing, month, onClose }) {
     return () => { active = false; };
   }, [marketing, month]);
 
-  const saveTax = async (event) => {
-    event.preventDefault();
-    const amount = Number(pph21Amount);
-    if (pph21Amount.trim() === "" || !Number.isSafeInteger(amount) || amount < 0) {
-      toast.error("Isi nominal PPh 21 dengan angka bulat nol atau lebih.");
-      return;
-    }
-
-    setSaving(true);
-    try {
-      const { data } = await api.put(`/salary-slips/${marketing.id}`, {
-        month,
-        pph21_amount: amount,
-        note: pph21Note.trim(),
-      });
-      setSlip(data);
-      setPph21Amount(String(data.pph21_amount));
-      setPph21Note(data.pph21_note || "");
-      toast.success("Nominal PPh 21 disimpan untuk periode ini.");
-    } catch (error) {
-      toast.error(formatApiError(error));
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const taxIsSaved = Boolean(
-    slip?.pph21_recorded
-    && pph21Amount === String(slip.pph21_amount)
-    && pph21Note.trim() === (slip.pph21_note || "")
-  );
-
   return (
-    <Dialog open={Boolean(marketing)} onOpenChange={(open) => { if (!open && !saving) onClose(); }}>
+    <Dialog open={Boolean(marketing)} onOpenChange={(open) => { if (!open) onClose(); }}>
       <DialogContent className="max-h-[90dvh] max-w-2xl overflow-y-auto rounded-lg" data-testid="salary-slip-dialog">
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-2"><ReceiptText className="h-5 w-5 text-emerald-700" /> Slip Gaji</DialogTitle>
+          <DialogTitle className="flex flex-col gap-1">
+            <span className="text-xs font-bold text-emerald-700">PT MITRA PULSA NASIONAL</span>
+            <span className="flex items-center gap-2 text-base"><ReceiptText className="h-5 w-5 text-emerald-700" /> RINCIAN PENGHASILAN KARYAWAN</span>
+          </DialogTitle>
           <DialogDescription>
-            {marketing?.name} · {month ? monthLabel(month) : ""}
+            Periode {month ? monthLabel(month) : ""}
           </DialogDescription>
         </DialogHeader>
 
@@ -182,12 +142,9 @@ export default function PayrollSlipDialog({ marketing, month, onClose }) {
         ) : slip ? (
           <div className="space-y-5" data-testid="salary-slip-content">
             <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 pb-4">
-              <div>
-                <p className="text-sm font-bold text-slate-900">{slip.name}</p>
-                <p className="mt-1 text-sm text-slate-500">{slip.attendance_days} hari hadir · {formatRupiah(slip.daily_rate)} per hari</p>
-              </div>
+              <p className="text-sm font-semibold text-slate-700">Periode {monthLabel(slip.month)}</p>
               <span className={slip.pph21_recorded ? "rounded-full bg-emerald-50 px-3 py-1 text-xs font-bold text-emerald-700" : "rounded-full bg-amber-50 px-3 py-1 text-xs font-bold text-amber-800"}>
-                {slip.pph21_recorded ? "PPh 21 tercatat" : "PPh 21 belum diisi"}
+                {slip.pph21_recorded ? `TER ${slip.pph21_category} · PTKP ${slip.ptkp_status}` : slip.annual_reconciliation_required ? "Rekonsiliasi tahunan diperlukan" : `PTKP ${month.slice(0, 4)} belum diatur`}
               </span>
             </div>
 
@@ -195,7 +152,7 @@ export default function PayrollSlipDialog({ marketing, month, onClose }) {
               <h3 id="salary-slip-earnings-title" className="mb-2 text-sm font-extrabold text-slate-900">Pendapatan</h3>
               <div className="overflow-hidden rounded-md border border-slate-200">
                 <div className="flex justify-between gap-4 border-b border-slate-100 px-3 py-2.5 text-sm">
-                  <span>Gaji kehadiran ({slip.attendance_days} hari)</span><span className="font-semibold tabular-nums">{formatRupiah(slip.attendance_pay)}</span>
+                  <span>Gaji pokok</span><span className="font-semibold tabular-nums">{formatRupiah(slip.attendance_pay)}</span>
                 </div>
                 {slip.earnings.map((item, index) => (
                   <div key={`${item.label}-${index}`} className="flex justify-between gap-4 border-b border-slate-100 px-3 py-2.5 text-sm last:border-b-0">
@@ -216,9 +173,20 @@ export default function PayrollSlipDialog({ marketing, month, onClose }) {
                     <span className="break-words">{item.label}</span><span className="shrink-0 font-semibold tabular-nums">{formatRupiah(item.amount)}</span>
                   </div>
                 ))}
+                <div className="border-b border-slate-100 px-3 py-2.5 text-sm">
+                  <span className="font-semibold">Potongan Kasbon</span>
+                  <span className="float-right font-semibold tabular-nums">{formatRupiah(slip.cash_advance_deduction)}</span>
+                </div>
+                <div className="border-b border-slate-100 px-3 py-2.5 text-sm">
+                  <span className="font-semibold">Potongan Tidak Masuk Kerja</span>
+                  <span className="float-right font-semibold tabular-nums">{formatRupiah(slip.absence_deduction)}</span>
+                </div>
+                <div className="border-b border-slate-100 px-3 py-2.5 text-sm leading-6">
+                  <strong>Keterangan:</strong> {slip.absence_notes.length ? slip.absence_notes.join("; ") : "Tidak ada keterangan"}
+                </div>
                 <div className="flex justify-between gap-4 border-b border-slate-100 px-3 py-2.5 text-sm">
-                  <span>PPh Pasal 21</span>
-                  <span className="shrink-0 font-semibold tabular-nums">{slip.pph21_recorded ? formatRupiah(slip.pph21_amount) : "Belum diisi"}</span>
+                  <span>{slip.pph21_recorded ? `PPh Pasal 21 · TER ${slip.pph21_category} (${slip.pph21_rate_percent}%)` : "PPh Pasal 21"}</span>
+                  <span className="shrink-0 font-semibold tabular-nums">{slip.pph21_recorded ? formatRupiah(slip.pph21_amount) : slip.annual_reconciliation_required ? "Hitung pajak tahunan" : "Atur status PTKP"}</span>
                 </div>
                 <div className="flex justify-between gap-4 bg-slate-50 px-3 py-3 text-sm font-extrabold">
                   <span>Total potongan</span><span className="tabular-nums">{formatRupiah(slip.total_deductions)}</span>
@@ -229,35 +197,17 @@ export default function PayrollSlipDialog({ marketing, month, onClose }) {
             <div className="flex flex-wrap items-end justify-between gap-3 rounded-md border border-emerald-200 bg-emerald-50 p-4">
               <div>
                 <p className="text-xs font-semibold text-emerald-800">Gaji bersih diterima</p>
-                <p className="mt-1 text-xl font-extrabold tabular-nums text-emerald-800">{formatRupiah(slip.net_pay)}</p>
+                <p className="mt-1 text-xl font-extrabold tabular-nums text-emerald-800">{slip.net_pay === null ? "Belum final" : formatRupiah(slip.net_pay)}</p>
               </div>
-              <p className="max-w-sm text-xs leading-5 text-emerald-900">Total pendapatan dikurangi seluruh potongan, termasuk PPh 21 yang dicatat admin.</p>
+              <p className="max-w-sm text-xs leading-5 text-emerald-900">{slip.pph21_recorded ? `PPh 21 otomatis: ${formatRupiah(slip.gross_pay)} × TER ${slip.pph21_category} ${slip.pph21_rate_percent}%.` : slip.annual_reconciliation_required ? "Untuk masa pajak Desember, hitung PPh 21 tahunan terlebih dahulu; slip belum difinalkan." : `Lengkapi status PTKP ${month.slice(0, 4)} di profil admin untuk menghitung pajak.`}</p>
             </div>
 
-            <form onSubmit={saveTax} className="space-y-3 border-t border-slate-200 pt-4">
-              <div>
-                <h3 className="text-sm font-extrabold text-slate-900">PPh 21</h3>
-                <p className="mt-1 text-xs leading-5 text-slate-500">Masukkan nominal dari perhitungan bagian keuangan. Aplikasi tidak menghitung tarif pajak otomatis. Jangan catat PPh 21 dua kali di penyesuaian gaji.</p>
-              </div>
-              <div className="grid gap-3 sm:grid-cols-[minmax(160px,220px)_minmax(0,1fr)] sm:items-end">
-                <div className="space-y-2">
-                  <Label htmlFor="salary-slip-pph21">Nominal (Rp)</Label>
-                  <Input id="salary-slip-pph21" type="number" min="0" step="1" inputMode="numeric" value={pph21Amount} onChange={(event) => setPph21Amount(event.target.value)} placeholder="Masukkan nominal" disabled={saving} data-testid="salary-slip-pph21-input" />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="salary-slip-tax-note">Catatan (opsional)</Label>
-                  <Input id="salary-slip-tax-note" maxLength={500} value={pph21Note} onChange={(event) => setPph21Note(event.target.value)} placeholder="Catatan dari bagian keuangan" disabled={saving} data-testid="salary-slip-tax-note-input" />
-                </div>
-              </div>
-              <div className="flex flex-wrap justify-end gap-2">
-                <Button type="submit" disabled={saving} className="bg-emerald-700 font-bold hover:bg-emerald-800" data-testid="salary-slip-save-tax-button">
-                  <Save className="h-4 w-4" />{saving ? "Menyimpan..." : "Simpan PPh 21"}
-                </Button>
-                <Button type="button" variant="outline" disabled={!taxIsSaved} onClick={() => printPayslip(slip)} className="font-bold" data-testid="salary-slip-print-button">
-                  <Printer className="h-4 w-4" />Cetak / Simpan PDF
-                </Button>
-              </div>
-            </form>
+            {slip.annual_reconciliation_required && <p role="note" className="rounded-md border border-amber-300 bg-amber-50 p-3 text-xs leading-5 text-amber-900">Periode Desember memerlukan rekonsiliasi PPh 21 setahun. Tarif TER bulanan tidak digunakan untuk menghitung potongan bulan ini.</p>}
+            <div className="flex justify-end border-t border-slate-200 pt-4">
+              <Button type="button" variant="outline" disabled={!slip.pph21_recorded} onClick={() => printPayslip(slip)} className="font-bold" data-testid="salary-slip-print-button">
+                <Printer className="h-4 w-4" />Cetak / Simpan PDF
+              </Button>
+            </div>
           </div>
         ) : (
           <p className="py-10 text-center text-sm text-slate-500">Rincian slip gaji belum dapat dimuat.</p>

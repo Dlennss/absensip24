@@ -1,6 +1,9 @@
 from datetime import date
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, field_validator, model_validator
+
+PTKP_REQUIRED_STATUS = Literal["TK/0", "TK/1", "TK/2", "TK/3", "K/0", "K/1", "K/2", "K/3"]
 
 
 class InventoryPatch(BaseModel):
@@ -32,6 +35,7 @@ class MarketingProfilePatch(BaseModel):
     bank: str = Field(default="", max_length=100)
     account_number: str = Field(default="", max_length=40)
     account_holder: str = Field(default="", max_length=150)
+    ptkp_by_year: dict[str, PTKP_REQUIRED_STATUS] = Field(default_factory=dict)
     inventory: InventoryPatch = Field(default_factory=InventoryPatch)
 
     @field_validator("joined_on")
@@ -51,6 +55,13 @@ class MarketingProfilePatch(BaseModel):
             raise ValueError("Nomor rekening hanya boleh berisi angka dan spasi")
         if value and not value.replace(" ", "").isdigit():
             raise ValueError("Nomor rekening hanya boleh berisi angka dan spasi")
+        return value
+
+    @field_validator("ptkp_by_year")
+    @classmethod
+    def valid_ptkp_years(cls, value):
+        if any(not year.isascii() or not year.isdigit() or len(year) != 4 for year in value):
+            raise ValueError("Tahun PTKP harus menggunakan format YYYY")
         return value
 
 
@@ -79,6 +90,8 @@ class MarketingRegistrationProfile(MarketingProfilePatch):
     @model_validator(mode="after")
     def inventory_dates(self):
         inventory = self.inventory
+        if not self.ptkp_by_year:
+            raise ValueError("Status PTKP untuk tahun pajak wajib diisi")
         if (inventory.uniforms or inventory.vest or inventory.id_card) and not inventory.received_on:
             raise ValueError("Tanggal penyerahan wajib untuk perlengkapan yang diterima")
         if inventory.returned_on and (not inventory.received_on or inventory.returned_on < inventory.received_on):

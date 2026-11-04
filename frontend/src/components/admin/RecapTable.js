@@ -5,6 +5,7 @@ import api, { API_BASE, formatApiError, formatRupiah, formatTanggal } from "@/li
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
   Dialog,
   DialogContent,
@@ -44,6 +45,12 @@ function dateKey(date) {
 
 function dayNameId(dateStr) {
   return new Date(`${dateStr}T00:00:00`).toLocaleDateString("id-ID", { weekday: "long" });
+}
+
+function adjustmentKindLabel(kind, amount) {
+  if (kind === "cash_advance") return "Kasbon";
+  if (kind === "absence_note") return "Keterangan tidak masuk";
+  return amount > 0 ? "Tambahan gaji" : "Potongan lain";
 }
 
 function getReportDays(month) {
@@ -165,6 +172,7 @@ export default function RecapTable({
   const [selectedRecap, setSelectedRecap] = useState(null);
   const [adjustmentAmount, setAdjustmentAmount] = useState("");
   const [adjustmentNote, setAdjustmentNote] = useState("");
+  const [adjustmentKind, setAdjustmentKind] = useState("other");
   const [editingAdjustment, setEditingAdjustment] = useState(null);
 
   const fetchRecap = useCallback(async () => {
@@ -291,17 +299,27 @@ export default function RecapTable({
   const resetAdjustmentForm = () => {
     setAdjustmentAmount("");
     setAdjustmentNote("");
+    setAdjustmentKind("other");
     setEditingAdjustment(null);
   };
 
   const saveAdjustment = async (sign = 1) => {
     if (!selectedRecap) return;
-    const rawAmount = Number(adjustmentAmount);
-    if (!rawAmount || Number.isNaN(rawAmount)) {
+    const isAbsenceNote = adjustmentKind === "absence_note";
+    const rawAmount = isAbsenceNote ? 0 : Number(adjustmentAmount);
+    if (isAbsenceNote && !adjustmentNote.trim()) {
+      toast.error("Keterangan tidak masuk wajib diisi.");
+      return;
+    }
+    if (!isAbsenceNote && (!rawAmount || Number.isNaN(rawAmount))) {
       toast.error("Nominal gaji wajib diisi");
       return;
     }
-    const amount = editingAdjustment ? rawAmount : Math.abs(rawAmount) * sign;
+    if (adjustmentKind === "cash_advance" && !editingAdjustment && sign > 0) {
+      toast.error("Kasbon harus disimpan sebagai potongan.");
+      return;
+    }
+    const amount = isAbsenceNote ? 0 : adjustmentKind === "cash_advance" ? -Math.abs(rawAmount) : editingAdjustment ? rawAmount : Math.abs(rawAmount) * sign;
     try {
       if (editingAdjustment) {
         await api.put(`/salary-adjustments/${editingAdjustment.id}`, {
@@ -309,6 +327,7 @@ export default function RecapTable({
           month,
           amount,
           note: adjustmentNote,
+          kind: adjustmentKind,
         });
         toast.success("Penyesuaian gaji diperbarui");
       } else {
@@ -317,8 +336,9 @@ export default function RecapTable({
           month,
           amount,
           note: adjustmentNote,
+          kind: adjustmentKind,
         });
-        toast.success(amount > 0 ? "Tambahan gaji disimpan" : "Pengurangan gaji disimpan");
+        toast.success(isAbsenceNote ? "Keterangan tidak masuk disimpan" : amount > 0 ? "Tambahan gaji disimpan" : "Pengurangan gaji disimpan");
       }
       resetAdjustmentForm();
       fetchRecap();
@@ -331,6 +351,7 @@ export default function RecapTable({
     setEditingAdjustment(item);
     setAdjustmentAmount(String(item.amount));
     setAdjustmentNote(item.note || "");
+    setAdjustmentKind(item.kind || "other");
   };
 
   const deleteAdjustment = async (item) => {
@@ -397,11 +418,8 @@ export default function RecapTable({
       ]),
       [],
       ["Penyesuaian Gaji"],
-      ["Catatan", "Nominal"],
-      ...selectedAdjustments.map((item) => [
-        item.note || (item.amount > 0 ? "Tambahan gaji" : "Pengurangan gaji"),
-        item.amount,
-      ]),
+      ["Jenis", "Keterangan", "Nominal"],
+      ...selectedAdjustments.map((item) => [adjustmentKindLabel(item.kind, item.amount), item.note, item.amount]),
       [],
       ["Total Hari Hadir", selectedPresentDays],
       ["Gaji Hadir", Math.round(selectedBaseSalary)],
@@ -598,15 +616,30 @@ export default function RecapTable({
             <div className="mb-4 flex flex-col gap-1">
               <h3 className="text-sm font-extrabold text-slate-950">Penyesuaian Gaji</h3>
               <p className="text-xs font-medium text-slate-500">
-                Tambahkan bonus atau potongan tanpa mengubah data absensi.
+                Potongan tidak masuk dihitung dari absensi; simpan keterangannya tanpa nominal agar tidak terpotong dua kali.
               </p>
             </div>
-            <div className="grid gap-3 md:grid-cols-[180px_minmax(220px,1fr)_auto] md:items-end">
+            <div className="grid gap-3 md:grid-cols-[160px_190px_minmax(220px,1fr)_auto] md:items-end">
               <div className="space-y-2">
-                <Label htmlFor="salary-adjustment-amount" className="text-xs font-bold text-slate-700">
-                  Nominal
+                <Label htmlFor="salary-adjustment-kind" className="text-xs font-bold text-slate-700">
+                  Jenis
                 </Label>
-                <Input
+                <Select value={adjustmentKind} onValueChange={setAdjustmentKind}>
+                  <SelectTrigger id="salary-adjustment-kind" className="h-10 rounded-lg border-slate-200 bg-white" data-testid="salary-adjustment-kind">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="other">Penghasilan / potongan lain</SelectItem>
+                    <SelectItem value="cash_advance">Kasbon</SelectItem>
+                    <SelectItem value="absence_note">Keterangan tidak masuk</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor={adjustmentKind === "absence_note" ? undefined : "salary-adjustment-amount"} className="text-xs font-bold text-slate-700">
+                  {adjustmentKind === "absence_note" ? "Potongan" : "Nominal"}
+                </Label>
+                {adjustmentKind === "absence_note" ? <p className="flex h-10 items-center rounded-lg border border-slate-200 bg-slate-100 px-3 text-xs text-slate-600">Dihitung otomatis dari absensi</p> : <Input
                   id="salary-adjustment-amount"
                   type="number"
                   value={adjustmentAmount}
@@ -614,7 +647,7 @@ export default function RecapTable({
                   placeholder="Contoh: 50000"
                   className="h-10 rounded-lg border-slate-200 bg-white"
                   data-testid="salary-adjustment-amount-input"
-                />
+                />}
               </div>
               <div className="space-y-2">
                 <Label htmlFor="salary-adjustment-note" className="text-xs font-bold text-slate-700">
@@ -624,7 +657,7 @@ export default function RecapTable({
                   id="salary-adjustment-note"
                   value={adjustmentNote}
                   onChange={(e) => setAdjustmentNote(e.target.value)}
-                  placeholder="Contoh: bonus target / kasbon"
+                  placeholder={adjustmentKind === "absence_note" ? "Alasan atau detail tidak masuk" : "Rincian penyesuaian gaji"}
                   className="h-10 rounded-lg border-slate-200 bg-white"
                   data-testid="salary-adjustment-note-input"
                 />
@@ -651,7 +684,15 @@ export default function RecapTable({
                   </>
                 ) : (
                   <>
-                    <Button
+                    {adjustmentKind === "absence_note" ? <Button
+                      type="button"
+                      onClick={() => saveAdjustment(0)}
+                      className="h-10 rounded-lg bg-emerald-600 font-bold hover:bg-emerald-700"
+                      data-testid="salary-adjustment-absence-note-button"
+                    >
+                      <Plus className="h-4 w-4" strokeWidth={1.7} />
+                      Catat Keterangan
+                    </Button> : adjustmentKind !== "cash_advance" && <Button
                       type="button"
                       onClick={() => saveAdjustment(1)}
                       className="h-10 rounded-lg bg-emerald-600 font-bold hover:bg-emerald-700"
@@ -659,8 +700,8 @@ export default function RecapTable({
                     >
                       <Plus className="h-4 w-4" strokeWidth={1.7} />
                       Tambah
-                    </Button>
-                    <Button
+                    </Button>}
+                    {adjustmentKind !== "absence_note" && <Button
                       type="button"
                       variant="outline"
                       onClick={() => saveAdjustment(-1)}
@@ -669,17 +710,18 @@ export default function RecapTable({
                     >
                       <Minus className="h-4 w-4" strokeWidth={1.7} />
                       Kurangi
-                    </Button>
+                    </Button>}
                   </>
                 )}
               </div>
             </div>
 
             <div className="mt-4 overflow-hidden rounded-lg border border-slate-200 bg-white">
-              <Table className="min-w-[620px]" data-testid="salary-adjustments-table">
+              <Table className="min-w-[720px]" data-testid="salary-adjustments-table">
                 <TableHeader>
                   <TableRow className="bg-white hover:bg-white">
-                    <TableHead>Catatan</TableHead>
+                    <TableHead>Jenis</TableHead>
+                    <TableHead>Keterangan</TableHead>
                     <TableHead>Nominal</TableHead>
                     <TableHead className="text-right">Aksi</TableHead>
                   </TableRow>
@@ -687,18 +729,19 @@ export default function RecapTable({
                 <TableBody>
                   {selectedAdjustments.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={3} className="py-8 text-center text-sm text-slate-500">
+                      <TableCell colSpan={4} className="py-8 text-center text-sm text-slate-500">
                         Belum ada tambahan atau pengurangan gaji.
                       </TableCell>
                     </TableRow>
                   ) : (
                     selectedAdjustments.map((item) => (
                       <TableRow key={item.id}>
+                        <TableCell className="font-semibold text-slate-700">{adjustmentKindLabel(item.kind, item.amount)}</TableCell>
                         <TableCell className="font-semibold text-slate-700">
-                          {item.note || (item.amount > 0 ? "Tambahan gaji" : "Pengurangan gaji")}
+                          {item.note || "-"}
                         </TableCell>
                         <TableCell className={item.amount >= 0 ? "font-bold text-emerald-700" : "font-bold text-red-700"}>
-                          {formatRupiah(item.amount)}
+                          {item.kind === "absence_note" ? "Dicatat" : formatRupiah(item.amount)}
                         </TableCell>
                         <TableCell className="text-right">
                           <div className="flex justify-end gap-2">

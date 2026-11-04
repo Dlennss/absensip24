@@ -10,7 +10,7 @@ from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, ValidationError
 from bson import ObjectId
 from pymongo.errors import DuplicateKeyError
-from typing import Optional
+from typing import Literal, Optional
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
 from zoneinfo import ZoneInfo
@@ -23,6 +23,7 @@ import logging
 import requests
 from io import BytesIO
 from marketing_profile import MarketingProfilePatch, MarketingRegistrationProfile, profile_update, profile_values
+from payroll_tax import PTKP_TER_CATEGORY, monthly_ter
 from ktp_images import normalize_ktp_image
 
 ROOT_DIR = Path(__file__).parent
@@ -107,12 +108,7 @@ class SalaryAdjustmentInput(BaseModel):
     month: str
     amount: int
     note: Optional[str] = None
-
-
-class SalarySlipTaxInput(BaseModel):
-    month: str
-    pph21_amount: int
-    note: Optional[str] = None
+    kind: Literal["other", "cash_advance", "absence_note"] = "other"
 
 
 MONTH_RE = re.compile(r"^\d{4}-\d{2}$")
@@ -159,6 +155,7 @@ def serialize_salary_adjustment(doc: dict) -> dict:
         "month": doc["month"],
         "amount": doc["amount"],
         "note": doc.get("note", ""),
+        "kind": doc.get("kind", "other"),
         "created_at": doc.get("created_at"),
         "updated_at": doc.get("updated_at"),
     }
@@ -724,8 +721,12 @@ async def list_salary_adjustments(month: str, admin=Depends(get_current_admin)):
 async def create_salary_adjustment(input: SalaryAdjustmentInput, admin=Depends(get_current_admin)):
     if not MONTH_RE.match(input.month):
         raise HTTPException(status_code=400, detail="Format bulan harus YYYY-MM")
-    if input.amount == 0:
+    if input.kind == "absence_note" and (input.amount != 0 or not (input.note or "").strip()):
+        raise HTTPException(status_code=400, detail="Keterangan tidak masuk wajib diisi dan tidak memakai nominal")
+    if input.kind != "absence_note" and input.amount == 0:
         raise HTTPException(status_code=400, detail="Nominal tidak boleh 0")
+    if input.kind == "cash_advance" and input.amount > 0:
+        raise HTTPException(status_code=400, detail="Kasbon harus dicatat sebagai potongan")
     marketing = await require_registered_marketing(input.name)
     doc = {
         "name": marketing["name"],
@@ -733,6 +734,7 @@ async def create_salary_adjustment(input: SalaryAdjustmentInput, admin=Depends(g
         "month": input.month,
         "amount": int(input.amount),
         "note": (input.note or "").strip(),
+        "kind": input.kind,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "updated_at": None,
     }
@@ -749,8 +751,12 @@ async def update_salary_adjustment(adjustment_id: str, input: SalaryAdjustmentIn
         raise HTTPException(status_code=400, detail="ID tidak valid")
     if not MONTH_RE.match(input.month):
         raise HTTPException(status_code=400, detail="Format bulan harus YYYY-MM")
-    if input.amount == 0:
+    if input.kind == "absence_note" and (input.amount != 0 or not (input.note or "").strip()):
+        raise HTTPException(status_code=400, detail="Keterangan tidak masuk wajib diisi dan tidak memakai nominal")
+    if input.kind != "absence_note" and input.amount == 0:
         raise HTTPException(status_code=400, detail="Nominal tidak boleh 0")
+    if input.kind == "cash_advance" and input.amount > 0:
+        raise HTTPException(status_code=400, detail="Kasbon harus dicatat sebagai potongan")
     doc = await db.salary_adjustments.find_one({"_id": oid})
     if not doc:
         raise HTTPException(status_code=404, detail="Penyesuaian gaji tidak ditemukan")
@@ -761,6 +767,7 @@ async def update_salary_adjustment(adjustment_id: str, input: SalaryAdjustmentIn
         "month": input.month,
         "amount": int(input.amount),
         "note": (input.note or "").strip(),
+        "kind": input.kind,
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }
     await db.salary_adjustments.update_one({"_id": oid}, {"$set": update})
@@ -809,13 +816,28 @@ async def get_salary_slip(marketing_id: str, month: str, admin=Depends(get_curre
     deductions = [
         {"label": item.get("note") or "Potongan gaji", "amount": abs(int(item["amount"]))}
         for item in adjustments
-        if item["amount"] < 0
+        if item["amount"] < 0 and item.get("kind", "other") != "cash_advance"
+    ]
+    cash_advance_deduction = sum(
+        abs(int(item["amount"])) for item in adjustments
+        if item["amount"] < 0 and item.get("kind") == "cash_advance"
+    )
+    absence_notes = [
+        item["note"].strip() for item in adjustments
+        if item.get("kind") == "absence_note" and item.get("note", "").strip()
     ]
     attendance_days = len(attendance)
     attendance_pay = int(attendance_days * BASE_SALARY / WORKING_DAYS + 0.5)
-    gross_pay = attendance_pay + sum(item["amount"] for item in earnings)
-    pph21_amount = int(slip["pph21_amount"]) if slip else 0
-    total_deductions = sum(item["amount"] for item in deductions) + pph21_amount
+    period_closed = month < today_jakarta().strftime("%Y-%m")
+    salary_basis = max(BASE_SALARY, attendance_pay) if period_closed else attendance_pay
+    gross_pay = salary_basis + sum(item["amount"] for item in earnings)
+    absence_deduction = max(0, salary_basis - attendance_pay)
+    ptkp_status = profile_values(marketing).get("ptkp_by_year", {}).get(month[:4], "")
+    ter_category = PTKP_TER_CATEGORY.get(ptkp_status)
+    annual_reconciliation_required = month.endswith("-12")
+    tax_calculated = ter_category is not None and not annual_reconciliation_required
+    pph21_rate_bps, pph21_amount = monthly_ter(ter_category, gross_pay) if tax_calculated else (None, None)
+    total_deductions = absence_deduction + cash_advance_deduction + sum(item["amount"] for item in deductions) + (pph21_amount or 0)
 
     return {
         "marketing_id": str(oid),
@@ -823,15 +845,22 @@ async def get_salary_slip(marketing_id: str, month: str, admin=Depends(get_curre
         "month": month,
         "attendance_days": attendance_days,
         "daily_rate": BASE_SALARY / WORKING_DAYS,
-        "attendance_pay": attendance_pay,
+        "attendance_pay": salary_basis,
+        "absence_deduction": absence_deduction,
+        "absence_notes": absence_notes,
+        "cash_advance_deduction": cash_advance_deduction,
         "earnings": earnings,
         "deductions": deductions,
         "pph21_amount": pph21_amount,
-        "pph21_note": slip.get("note", "") if slip else "",
-        "pph21_recorded": slip is not None,
+        "pph21_rate_percent": pph21_rate_bps / 100 if pph21_rate_bps is not None else None,
+        "pph21_category": ter_category,
+        "ptkp_status": ptkp_status or None,
+        "pph21_recorded": tax_calculated,
+        "legacy_manual_pph21_saved": slip is not None,
+        "annual_reconciliation_required": annual_reconciliation_required,
         "gross_pay": gross_pay,
         "total_deductions": total_deductions,
-        "net_pay": gross_pay - total_deductions,
+        "net_pay": gross_pay - total_deductions if tax_calculated else None,
         "updated_at": slip.get("updated_at") if slip else None,
     }
 
@@ -839,40 +868,9 @@ async def get_salary_slip(marketing_id: str, month: str, admin=Depends(get_curre
 @api_router.put("/salary-slips/{marketing_id}")
 async def save_salary_slip_tax(
     marketing_id: str,
-    input: SalarySlipTaxInput,
     admin=Depends(get_current_admin),
 ):
-    try:
-        oid = ObjectId(marketing_id)
-    except Exception:
-        raise HTTPException(status_code=400, detail="ID marketing tidak valid")
-    if not MONTH_RE.fullmatch(input.month) or not 1 <= int(input.month[5:]) <= 12:
-        raise HTTPException(status_code=400, detail="Format bulan harus YYYY-MM")
-    if input.pph21_amount < 0:
-        raise HTTPException(status_code=400, detail="PPh 21 tidak boleh bernilai negatif")
-
-    marketing = await db.marketing.find_one({"_id": oid})
-    if not marketing:
-        raise HTTPException(status_code=404, detail="Data marketing tidak ditemukan")
-
-    now = datetime.now(timezone.utc).isoformat()
-    selector = {"marketing_id": str(oid), "month": input.month}
-    changes = {
-        "name": marketing["name"],
-        "pph21_amount": int(input.pph21_amount),
-        "note": (input.note or "").strip()[:500],
-        "updated_at": now,
-        "updated_by": admin.get("email", "Admin"),
-    }
-    try:
-        await db.salary_slips.update_one(
-            selector,
-            {"$set": changes, "$setOnInsert": {"created_at": now}},
-            upsert=True,
-        )
-    except DuplicateKeyError:
-        await db.salary_slips.update_one(selector, {"$set": changes})
-    return await get_salary_slip(marketing_id, input.month, admin)
+    raise HTTPException(status_code=409, detail="PPh 21 kini dihitung otomatis dari status PTKP dan bruto bulanan.")
 
 
 @api_router.get("/recap")
