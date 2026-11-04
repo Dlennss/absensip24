@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { toast } from "sonner";
-import { Download, Eye, ImageOff, Minus, Pencil, Plus, Printer, Search, Trash2 } from "lucide-react";
+import { Download, Eye, ImageOff, Minus, Pencil, Plus, Printer, ReceiptText, Search, Trash2 } from "lucide-react";
 import api, { API_BASE, formatApiError, formatRupiah, formatTanggal } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -20,6 +20,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import PayrollSlipDialog from "./PayrollSlipDialog";
 
 const BASE_SALARY = 4000000;
 const WORKING_DAYS = 26;
@@ -127,7 +128,7 @@ function printMonthlyReport(title, dailyRecords, adjustments = []) {
       </head>
       <body>
         <h1>${title}</h1>
-        <p>Total hadir: ${presentDays} hari - gaji hadir ${formatRupiah(presentDays * DAILY_RATE)} - penyesuaian ${formatRupiah(adjustmentTotal)} - total akhir ${formatRupiah(finalTotal)}</p>
+        <p>Total hadir: ${presentDays} hari - gaji hadir ${formatRupiah(presentDays * DAILY_RATE)} - penyesuaian ${formatRupiah(adjustmentTotal)} - total sebelum PPh 21 ${formatRupiah(finalTotal)}</p>
         <table>
           <thead>
             <tr><th>No</th><th>Tanggal</th><th>Hari</th><th>Status</th><th>Foto</th><th>Gaji</th></tr>
@@ -158,6 +159,8 @@ export default function RecapTable({
   const [attendance, setAttendance] = useState([]);
   const [marketing, setMarketing] = useState([]);
   const [salaryAdjustments, setSalaryAdjustments] = useState([]);
+  const [selectedSlipMarketing, setSelectedSlipMarketing] = useState(null);
+  const [openingSlip, setOpeningSlip] = useState(false);
   const [search, setSearch] = useState("");
   const [selectedRecap, setSelectedRecap] = useState(null);
   const [adjustmentAmount, setAdjustmentAmount] = useState("");
@@ -263,6 +266,27 @@ export default function RecapTable({
   const selectedTitle = selectedRecap
     ? `Rekap ${selectedRecap.name} - ${monthLabel(month)}`
     : `Rekap ${monthLabel(month)}`;
+
+  const openSalarySlip = async () => {
+    if (!selectedRecap) return;
+    setOpeningSlip(true);
+    try {
+      let marketingItem = marketing.find((item) => item.name.toLowerCase() === selectedRecap.name.toLowerCase());
+      if (!marketingItem) {
+        const { data } = await api.get("/marketing", { params: { q: selectedRecap.name } });
+        marketingItem = data.find((item) => item.name.toLowerCase() === selectedRecap.name.toLowerCase());
+      }
+      if (!marketingItem) {
+        toast.error("Data marketing belum dapat dimuat. Coba muat ulang halaman.");
+        return;
+      }
+      setSelectedSlipMarketing(marketingItem);
+    } catch (error) {
+      toast.error(formatApiError(error));
+    } finally {
+      setOpeningSlip(false);
+    }
+  };
 
   const resetAdjustmentForm = () => {
     setAdjustmentAmount("");
@@ -382,7 +406,7 @@ export default function RecapTable({
       ["Total Hari Hadir", selectedPresentDays],
       ["Gaji Hadir", Math.round(selectedBaseSalary)],
       ["Total Penyesuaian", selectedAdjustmentTotal],
-      ["Total Akhir", Math.round(selectedFinalSalary)],
+      ["Total Sebelum PPh 21", Math.round(selectedFinalSalary)],
     ];
     downloadCsv(`rekap-${filenameName}-${month}.csv`, rows);
   };
@@ -459,7 +483,7 @@ export default function RecapTable({
               <TableHead>Nama Marketing</TableHead>
               <TableHead>Total Hari Masuk</TableHead>
               <TableHead>Gaji per Hari</TableHead>
-              <TableHead>Total Gaji</TableHead>
+              <TableHead>Gaji Sebelum PPh 21</TableHead>
               <TableHead className="text-right">Aksi</TableHead>
             </TableRow>
           </TableHeader>
@@ -532,7 +556,7 @@ export default function RecapTable({
             <DialogTitle>{selectedTitle}</DialogTitle>
             <DialogDescription>
               {selectedPresentDays} hari hadir, gaji hadir {formatRupiah(selectedBaseSalary)}, penyesuaian{" "}
-              {formatRupiah(selectedAdjustmentTotal)}, total akhir {formatRupiah(selectedFinalSalary)}.
+              {formatRupiah(selectedAdjustmentTotal)}, gaji sebelum PPh 21 {formatRupiah(selectedFinalSalary)}.
             </DialogDescription>
           </DialogHeader>
 
@@ -556,6 +580,17 @@ export default function RecapTable({
             >
               <Printer className="h-4 w-4" strokeWidth={1.7} />
               Print / PDF
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={openingSlip}
+              onClick={openSalarySlip}
+              className="rounded-lg border-emerald-200 bg-emerald-50 font-bold text-emerald-800 hover:bg-emerald-100"
+              data-testid="monthly-payslip-button"
+            >
+              <ReceiptText className="h-4 w-4" strokeWidth={1.7} />
+              {openingSlip ? "Memuat Slip..." : "Slip Gaji"}
             </Button>
           </div>
 
@@ -740,6 +775,11 @@ export default function RecapTable({
           </div>
         </DialogContent>
       </Dialog>
+      <PayrollSlipDialog
+        marketing={selectedSlipMarketing}
+        month={month}
+        onClose={() => setSelectedSlipMarketing(null)}
+      />
     </div>
   );
 }

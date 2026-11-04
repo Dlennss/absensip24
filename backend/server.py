@@ -109,6 +109,12 @@ class SalaryAdjustmentInput(BaseModel):
     note: Optional[str] = None
 
 
+class SalarySlipTaxInput(BaseModel):
+    month: str
+    pph21_amount: int
+    note: Optional[str] = None
+
+
 MONTH_RE = re.compile(r"^\d{4}-\d{2}$")
 
 
@@ -774,6 +780,101 @@ async def delete_salary_adjustment(adjustment_id: str, admin=Depends(get_current
     return {"message": "Penyesuaian gaji berhasil dihapus"}
 
 
+@api_router.get("/salary-slips/{marketing_id}")
+async def get_salary_slip(marketing_id: str, month: str, admin=Depends(get_current_admin)):
+    try:
+        oid = ObjectId(marketing_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="ID marketing tidak valid")
+    if not MONTH_RE.fullmatch(month) or not 1 <= int(month[5:]) <= 12:
+        raise HTTPException(status_code=400, detail="Format bulan harus YYYY-MM")
+
+    marketing = await db.marketing.find_one({"_id": oid})
+    if not marketing:
+        raise HTTPException(status_code=404, detail="Data marketing tidak ditemukan")
+
+    attendance = await db.attendance.find(
+        {"name_lower": marketing["name_lower"], "date": {"$regex": f"^{month}-"}}
+    ).to_list(35)
+    adjustments = await db.salary_adjustments.find(
+        {"name_lower": marketing["name_lower"], "month": month}
+    ).sort("created_at", 1).to_list(5000)
+    slip = await db.salary_slips.find_one({"marketing_id": str(oid), "month": month})
+
+    earnings = [
+        {"label": item.get("note") or "Tambahan gaji", "amount": int(item["amount"])}
+        for item in adjustments
+        if item["amount"] > 0
+    ]
+    deductions = [
+        {"label": item.get("note") or "Potongan gaji", "amount": abs(int(item["amount"]))}
+        for item in adjustments
+        if item["amount"] < 0
+    ]
+    attendance_days = len(attendance)
+    attendance_pay = int(attendance_days * BASE_SALARY / WORKING_DAYS + 0.5)
+    gross_pay = attendance_pay + sum(item["amount"] for item in earnings)
+    pph21_amount = int(slip["pph21_amount"]) if slip else 0
+    total_deductions = sum(item["amount"] for item in deductions) + pph21_amount
+
+    return {
+        "marketing_id": str(oid),
+        "name": marketing["name"],
+        "month": month,
+        "attendance_days": attendance_days,
+        "daily_rate": BASE_SALARY / WORKING_DAYS,
+        "attendance_pay": attendance_pay,
+        "earnings": earnings,
+        "deductions": deductions,
+        "pph21_amount": pph21_amount,
+        "pph21_note": slip.get("note", "") if slip else "",
+        "pph21_recorded": slip is not None,
+        "gross_pay": gross_pay,
+        "total_deductions": total_deductions,
+        "net_pay": gross_pay - total_deductions,
+        "updated_at": slip.get("updated_at") if slip else None,
+    }
+
+
+@api_router.put("/salary-slips/{marketing_id}")
+async def save_salary_slip_tax(
+    marketing_id: str,
+    input: SalarySlipTaxInput,
+    admin=Depends(get_current_admin),
+):
+    try:
+        oid = ObjectId(marketing_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="ID marketing tidak valid")
+    if not MONTH_RE.fullmatch(input.month) or not 1 <= int(input.month[5:]) <= 12:
+        raise HTTPException(status_code=400, detail="Format bulan harus YYYY-MM")
+    if input.pph21_amount < 0:
+        raise HTTPException(status_code=400, detail="PPh 21 tidak boleh bernilai negatif")
+
+    marketing = await db.marketing.find_one({"_id": oid})
+    if not marketing:
+        raise HTTPException(status_code=404, detail="Data marketing tidak ditemukan")
+
+    now = datetime.now(timezone.utc).isoformat()
+    selector = {"marketing_id": str(oid), "month": input.month}
+    changes = {
+        "name": marketing["name"],
+        "pph21_amount": int(input.pph21_amount),
+        "note": (input.note or "").strip()[:500],
+        "updated_at": now,
+        "updated_by": admin.get("email", "Admin"),
+    }
+    try:
+        await db.salary_slips.update_one(
+            selector,
+            {"$set": changes, "$setOnInsert": {"created_at": now}},
+            upsert=True,
+        )
+    except DuplicateKeyError:
+        await db.salary_slips.update_one(selector, {"$set": changes})
+    return await get_salary_slip(marketing_id, input.month, admin)
+
+
 @api_router.get("/recap")
 async def recap(month: Optional[str] = None, admin=Depends(get_current_admin)):
     query = {}
@@ -827,6 +928,7 @@ async def startup():
     await db.marketing.create_index("name_lower", unique=True)
     await db.attendance.create_index([("name_lower", 1), ("date", 1)], unique=True)
     await db.salary_adjustments.create_index([("name_lower", 1), ("month", 1)])
+    await db.salary_slips.create_index([("marketing_id", 1), ("month", 1)], unique=True)
     await db.login_attempts.create_index("identifier")
     await seed_admin()
 
