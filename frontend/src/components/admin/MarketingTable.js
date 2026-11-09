@@ -52,7 +52,7 @@ export default function MarketingTable() {
   };
 
   const keyword = search.trim().toLowerCase();
-  const filtered = marketing.filter((item) => [item.name, item.code, item.profile?.phone].some((value) => value?.toLowerCase().includes(keyword)));
+  const filtered = marketing.filter((item) => [item.name, item.code, item.profile?.phone, item.profile?.address].some((value) => value?.toLowerCase().includes(keyword)));
 
   return (
     <div data-testid="marketing-table-section">
@@ -79,7 +79,7 @@ export default function MarketingTable() {
           id="marketing-search"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          placeholder="Cari nama, kode, atau nomor HP"
+          placeholder="Cari nama, kode, nomor HP, atau alamat"
           className="h-11 rounded-lg border-slate-200 bg-white"
           data-testid="marketing-search-input"
         />
@@ -87,11 +87,12 @@ export default function MarketingTable() {
 
       <TooltipProvider>
       <div className="overflow-hidden rounded-lg border border-slate-200 bg-white">
-        <Table className="min-w-[800px]" data-testid="marketing-table">
+        <Table className="min-w-[1000px]" data-testid="marketing-table">
           <TableHeader>
             <TableRow className="bg-slate-50 hover:bg-slate-50">
               <TableHead>Nama Marketing</TableHead>
               <TableHead>Nomor HP</TableHead>
+              <TableHead>Alamat</TableHead>
               <TableHead>Bank / Rekening</TableHead>
               <TableHead>Status</TableHead>
               <TableHead className="w-36 text-right">Aksi</TableHead>
@@ -100,7 +101,7 @@ export default function MarketingTable() {
           <TableBody>
             {loading || loadError || filtered.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={5} className="py-12 text-center text-slate-500">
+                <TableCell colSpan={6} className="py-12 text-center text-slate-500">
                   <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-lg bg-slate-100 text-slate-400">
                     <UsersRound className="h-5 w-5" strokeWidth={1.7} />
                   </div>
@@ -113,6 +114,7 @@ export default function MarketingTable() {
                 <TableRow className="hover:bg-emerald-50/40" key={item.id}>
                   <TableCell className="max-w-[260px] whitespace-normal break-words font-bold text-slate-900">{item.name}</TableCell>
                   <TableCell>{item.profile?.phone || "Belum diisi"}</TableCell>
+                  <TableCell className="max-w-[300px] whitespace-normal break-words">{item.profile?.address || "Belum diisi"}</TableCell>
                   <TableCell><p>{item.profile?.bank || "Belum diisi"}</p><p className="text-xs text-slate-500">{item.profile?.account_number ? `****${item.profile.account_number.replace(/ /g, "").slice(-4)}` : ""}</p></TableCell>
                   <TableCell className={item.profile?.is_active === false ? "text-slate-500" : "font-semibold text-emerald-700"}>{item.profile?.is_active === false ? "Nonaktif" : "Aktif"}</TableCell>
                   <TableCell className="text-right">

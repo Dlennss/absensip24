@@ -21,7 +21,7 @@ from test_ktp_uploads import upload
 
 
 def complete_profile():
-    return {"phone": "081234567890", "joined_on": "2026-10-16", "bank": "BCA",
+    return {"address": "Jl. Melati No. 10, Jakarta", "phone": "081234567890", "joined_on": "2026-10-16", "bank": "BCA",
             "account_number": "000123456789", "account_holder": "Marketing Baru",
             "ptkp_by_year": {"2026": "TK/0"},
             "inventory": {"uniforms": 0, "vest": False, "id_card": False}}
@@ -29,7 +29,7 @@ def complete_profile():
 
 class RegistrationValidationTests(unittest.TestCase):
     def test_all_identity_and_bank_fields_are_required(self):
-        for field in ("phone", "joined_on", "bank", "account_number", "account_holder", "ptkp_by_year"):
+        for field in ("address", "phone", "joined_on", "bank", "account_number", "account_holder", "ptkp_by_year"):
             for missing in (None, "", "   "):
                 profile = complete_profile()
                 if missing is None:

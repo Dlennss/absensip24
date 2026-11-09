@@ -65,6 +65,7 @@ chainlit.md
 agenthub/agents/youtube/db
 .mongo-data/
 .mongo-log/
+/.mongo-recovery-inspect/
 backend/uploads/*
 backend/uploads-private/
 

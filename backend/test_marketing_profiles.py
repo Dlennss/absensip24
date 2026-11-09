@@ -22,6 +22,7 @@ class ProfileValidationTests(unittest.TestCase):
         profile = server.serialize_marketing_profile(doc)
         self.assertEqual(doc, before)
         self.assertTrue(profile["profile"]["is_active"])
+        self.assertEqual(profile["profile"]["address"], "")
         self.assertEqual(profile["profile"]["account_number"], "")
         self.assertEqual(profile["profile"]["inventory"]["uniforms"], 0)
 
@@ -36,6 +37,11 @@ class ProfileValidationTests(unittest.TestCase):
         value = MarketingProfilePatch(inventory={"vest": True})
         self.assertEqual(profile_update(value), {"profile.inventory.vest": True})
         self.assertEqual(profile_update(MarketingProfilePatch(phone="0812")), {"profile.phone": "0812"})
+
+    def test_address_is_trimmed_and_partial_update_preserves_other_fields(self):
+        value = MarketingProfilePatch(address="  Jl. Melati No. 10  ")
+        self.assertEqual(value.address, "Jl. Melati No. 10")
+        self.assertEqual(profile_update(value), {"profile.address": "Jl. Melati No. 10"})
 
     def test_invalid_dates_quantities_and_unknown_fields_rejected(self):
         for data in ({"joined_on": "2026-02-30"}, {"inventory": {"uniforms": -1}},

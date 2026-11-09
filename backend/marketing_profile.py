@@ -29,6 +29,7 @@ class InventoryPatch(BaseModel):
 class MarketingProfilePatch(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    address: str = Field(default="", max_length=500)
     phone: str = Field(default="", max_length=30)
     joined_on: str = Field(default="", max_length=10)
     is_active: StrictBool = True
@@ -43,7 +44,7 @@ class MarketingProfilePatch(BaseModel):
     def valid_date(cls, value):
         return InventoryPatch.valid_date(value)
 
-    @field_validator("phone", "bank", "account_number", "account_holder")
+    @field_validator("address", "phone", "bank", "account_number", "account_holder")
     @classmethod
     def trim_text(cls, value):
         return value.strip()
@@ -66,13 +67,14 @@ class MarketingProfilePatch(BaseModel):
 
 
 class MarketingRegistrationProfile(MarketingProfilePatch):
+    address: str = Field(min_length=5, max_length=500)
     phone: str = Field(min_length=1, max_length=30)
     joined_on: str = Field(min_length=1, max_length=10)
     bank: str = Field(min_length=1, max_length=100)
     account_number: str = Field(min_length=1, max_length=40)
     account_holder: str = Field(min_length=1, max_length=150)
 
-    @field_validator("phone", "joined_on", "bank", "account_number", "account_holder")
+    @field_validator("address", "phone", "joined_on", "bank", "account_number", "account_holder")
     @classmethod
     def required_text(cls, value):
         if not value.strip():

@@ -20,7 +20,7 @@ const dateLabel = (value) => value ? new Date(`${value}T00:00:00`).toLocaleDateS
 export default function MarketingProfileDialog({ item, initialEditing, onClose, onSaved }) {
   const creating = !item?.id;
   const original = {
-    phone: "", joined_on: "", is_active: true, bank: "", account_number: "", account_holder: "", ptkp_by_year: {},
+    address: "", phone: "", joined_on: "", is_active: true, bank: "", account_number: "", account_holder: "", ptkp_by_year: {},
     ...item?.profile, ptkp_by_year: { ...item?.profile?.ptkp_by_year }, inventory: { ...emptyInventory, ...item?.profile?.inventory },
   };
   const [name, setName] = useState(item?.name || "");
@@ -115,7 +115,7 @@ export default function MarketingProfileDialog({ item, initialEditing, onClose, 
       <DialogContent className="max-h-[90dvh] max-w-2xl overflow-y-auto rounded-lg" data-testid={creating ? "marketing-dialog" : "marketing-profile-dialog"}>
         <DialogHeader>
           <DialogTitle className="break-words pr-6">{creating ? "Tambah Marketing" : item.name}</DialogTitle>
-          <DialogDescription className="break-all">{creating ? "Data diri, status PTKP tahun ini, rekening, dan foto KTP wajib diisi." : item.code}</DialogDescription>
+          <DialogDescription className="break-all">{creating ? "Data diri, alamat, status PTKP tahun ini, rekening, dan foto KTP wajib diisi." : item.code}</DialogDescription>
         </DialogHeader>
         <form onSubmit={save} className="min-w-0 space-y-5">
           {creating && <div className="space-y-2">
@@ -133,6 +133,10 @@ export default function MarketingProfileDialog({ item, initialEditing, onClose, 
             <div className="grid gap-4 sm:grid-cols-2">
               {field("phone", "Nomor HP", { type: "tel", maxLength: 30, pattern: creating ? "\\+?[0-9 ]{8,30}" : undefined })}
               {field("joined_on", "Tanggal bergabung", { type: "date" })}
+              <div className="min-w-0 space-y-2 sm:col-span-2">
+                <Label htmlFor="profile-address" className="text-sm font-semibold">Alamat lengkap</Label>
+                {editing ? <textarea id="profile-address" value={profile.address} onChange={(event) => change("address", event.target.value)} maxLength={500} minLength={5} required={creating} rows={3} placeholder="Jalan, nomor rumah, RT/RW, kelurahan, kecamatan, kota, dan kode pos" className="w-full rounded-md border border-slate-200 bg-white p-3 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500" /> : <p className="whitespace-pre-wrap break-words text-sm text-slate-700">{profile.address || "Belum diisi"}</p>}
+              </div>
               <div className="min-w-0 space-y-2">
                 <Label htmlFor="profile-ptkp-year" className="text-sm font-semibold">Status PTKP per tahun</Label>
                 {editing ? <div className="grid grid-cols-[112px_minmax(0,1fr)] gap-2">

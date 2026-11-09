@@ -10,8 +10,7 @@ function resolveApiBase() {
     const isLocalBackend = ["localhost", "127.0.0.1", "::1"].includes(url.hostname);
     const isRemoteBrowser = !["localhost", "127.0.0.1", "::1"].includes(window.location.hostname);
     if (isLocalBackend && isRemoteBrowser) {
-      url.hostname = window.location.hostname;
-      return url.origin;
+      return window.location.origin;
     }
     return url.origin;
   } catch {
