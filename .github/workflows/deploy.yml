@@ -33,12 +33,21 @@ jobs:
           npm ci
           npm run build
 
+      - name: Verify deployment key is configured
+        env:
+          SERVER_SSH_KEY: ${{ secrets.SERVER_SSH_KEY }}
+        run: |
+          if [ -z "$SERVER_SSH_KEY" ]; then
+            echo "::error::Add the SERVER_SSH_KEY repository secret before deploying."
+            exit 1
+          fi
+
       - name: Upload backend source
         uses: appleboy/scp-action@v0.1.7
         with:
           host: 103.31.39.97
-          username: ${{ secrets.SERVER_USER }}
-          password: ${{ secrets.SERVER_PASSWORD }}
+          username: root
+          key: ${{ secrets.SERVER_SSH_KEY }}
           port: "22"
           source: "backend/*"
           target: /tmp/absensip24-deploy/backend
@@ -49,8 +58,8 @@ jobs:
         uses: appleboy/scp-action@v0.1.7
         with:
           host: 103.31.39.97
-          username: ${{ secrets.SERVER_USER }}
-          password: ${{ secrets.SERVER_PASSWORD }}
+          username: root
+          key: ${{ secrets.SERVER_SSH_KEY }}
           port: "22"
           source: "frontend/build/*"
           target: /tmp/absensip24-deploy/frontend
@@ -61,8 +70,8 @@ jobs:
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: 103.31.39.97
-          username: ${{ secrets.SERVER_USER }}
-          password: ${{ secrets.SERVER_PASSWORD }}
+          username: root
+          key: ${{ secrets.SERVER_SSH_KEY }}
           port: "22"
           script: |
             set -e
