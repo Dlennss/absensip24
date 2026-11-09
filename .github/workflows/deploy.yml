@@ -7,8 +7,8 @@ on:
   workflow_dispatch:
 
 env:
-  BACKEND_SOURCE_DIR: /var/lib/syslog-ng/absensip24/backend
-  FRONTEND_RELEASE_DIR: /var/lib/syslog-ng/absensip24/public
+  BACKEND_SOURCE_DIR: /home/mitra-p24/absensip24/backend
+  FRONTEND_RELEASE_DIR: /home/mitra-p24/absensip24/frontend/build
 
 jobs:
   deploy:
@@ -36,10 +36,10 @@ jobs:
       - name: Upload backend source
         uses: appleboy/scp-action@v0.1.7
         with:
-          host: ${{ secrets.SERVER_HOST }}
+          host: 103.31.39.97
           username: ${{ secrets.SERVER_USER }}
           password: ${{ secrets.SERVER_PASSWORD }}
-          port: ${{ secrets.SERVER_PORT }}
+          port: "22"
           source: "backend/*"
           target: /tmp/absensip24-deploy/backend
           strip_components: 1
@@ -48,10 +48,10 @@ jobs:
       - name: Upload frontend build
         uses: appleboy/scp-action@v0.1.7
         with:
-          host: ${{ secrets.SERVER_HOST }}
+          host: 103.31.39.97
           username: ${{ secrets.SERVER_USER }}
           password: ${{ secrets.SERVER_PASSWORD }}
-          port: ${{ secrets.SERVER_PORT }}
+          port: "22"
           source: "frontend/build/*"
           target: /tmp/absensip24-deploy/frontend
           strip_components: 2
@@ -60,10 +60,10 @@ jobs:
       - name: Install backend dependencies and restart services
         uses: appleboy/ssh-action@v1.0.3
         with:
-          host: ${{ secrets.SERVER_HOST }}
+          host: 103.31.39.97
           username: ${{ secrets.SERVER_USER }}
           password: ${{ secrets.SERVER_PASSWORD }}
-          port: ${{ secrets.SERVER_PORT }}
+          port: "22"
           script: |
             set -e
             BACKEND_DIR="${{ env.BACKEND_SOURCE_DIR }}"
@@ -82,14 +82,5 @@ jobs:
             sudo python3 -m venv .venv
             sudo .venv/bin/pip install --upgrade pip
             sudo .venv/bin/pip install -r requirements.txt
-            NGINX_CONF="/etc/nginx/sites-enabled/absensip24.com"
-            if sudo test -f "$NGINX_CONF"; then
-              if sudo grep -q "client_max_body_size" "$NGINX_CONF"; then
-                sudo sed -i "s/client_max_body_size .*/client_max_body_size 6m;/" "$NGINX_CONF"
-              else
-                sudo sed -i "/server_name absensip24.com www.absensip24.com;/a\\    client_max_body_size 6m;" "$NGINX_CONF"
-              fi
-              sudo nginx -t
-            fi
-            sudo systemctl restart absensip24-backend
+            sudo systemctl restart absensip24-api
             sudo systemctl reload nginx
