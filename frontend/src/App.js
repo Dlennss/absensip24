@@ -1,10 +1,9 @@
 import "@/App.css";
-import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { BrowserRouter, Navigate, Routes, Route } from "react-router-dom";
 import { Toaster } from "@/components/ui/sonner";
 import AttendancePage from "@/pages/AttendancePage";
 import AdminLoginPage from "@/pages/AdminLoginPage";
 import AdminDashboard from "@/pages/AdminDashboard";
-import MarketingLoginPage from "@/pages/MarketingLoginPage";
 import MarketingDashboard from "@/pages/MarketingDashboard";
 
 function App() {
@@ -13,9 +12,10 @@ function App() {
       <BrowserRouter>
         <Routes>
           <Route path="/" element={<AttendancePage />} />
-          <Route path="/admin/login" element={<AdminLoginPage />} />
+          <Route path="/login" element={<AdminLoginPage />} />
+          <Route path="/admin/login" element={<Navigate to="/login?role=admin" replace />} />
           <Route path="/admin" element={<AdminDashboard />} />
-          <Route path="/marketing/login" element={<MarketingLoginPage />} />
+          <Route path="/marketing/login" element={<Navigate to="/login?role=marketing" replace />} />
           <Route path="/marketing" element={<MarketingDashboard />} />
         </Routes>
       </BrowserRouter>

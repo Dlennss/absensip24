@@ -501,17 +501,8 @@ export default function AttendancePage() {
           </form>
 
         <p className="mt-5 text-center">
-          <a
-            href="/admin/login"
-            className="text-sm font-semibold text-slate-500 transition-colors duration-200 hover:text-emerald-700"
-            data-testid="admin-login-link"
-          >
-            Masuk sebagai Admin
-          </a>
-        </p>
-        <p className="mt-2 text-center">
-          <a href="/marketing/login" className="text-sm font-semibold text-slate-500 transition-colors duration-200 hover:text-emerald-700">
-            Masuk sebagai Marketing
+          <a href="/login" className="text-sm font-semibold text-slate-500 transition-colors duration-200 hover:text-emerald-700" data-testid="login-link">
+            Masuk Admin / Marketing
           </a>
         </p>
         </section>
