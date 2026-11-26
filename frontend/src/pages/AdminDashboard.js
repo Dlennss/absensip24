@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { CalendarDays, LayoutDashboard, LogOut, UsersRound } from "lucide-react";
-import api, { formatApiError } from "@/lib/api";
+import api, { formatApiError, formatTanggal } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import AttendanceTable from "@/components/admin/AttendanceTable";
@@ -15,13 +15,18 @@ export default function AdminDashboard() {
   const [checking, setChecking] = useState(true);
   const [adminName, setAdminName] = useState("Admin");
   const [attendance, setAttendance] = useState([]);
+  const [missingAttendance, setMissingAttendance] = useState({ date: "", names: [], count: 0 });
   const [month, setMonth] = useState(currentMonth);
   const [archiveMonth, setArchiveMonth] = useState(currentMonth);
 
   const fetchAttendance = useCallback(async () => {
     try {
-      const { data } = await api.get("/attendance", { params: { month } });
-      setAttendance(data);
+      const [attendanceResponse, missingResponse] = await Promise.all([
+        api.get("/attendance", { params: { month } }),
+        api.get("/attendance/missing"),
+      ]);
+      setAttendance(attendanceResponse.data);
+      setMissingAttendance(missingResponse.data);
     } catch (err) {
       toast.error(formatApiError(err));
     }
@@ -110,6 +115,36 @@ export default function AdminDashboard() {
                 <p className="mt-1 text-lg font-extrabold text-slate-950">{month}</p>
               </div>
             </div>
+          </div>
+        </section>
+
+        <section
+          className={`mb-6 rounded-lg border p-4 ${missingAttendance.count ? "border-amber-200 bg-amber-50" : "border-emerald-200 bg-emerald-50"}`}
+          aria-live="polite"
+          data-testid="attendance-reminder"
+        >
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h2 className={`text-sm font-extrabold ${missingAttendance.count ? "text-amber-950" : "text-emerald-900"}`}>
+                {missingAttendance.count ? "Pengingat absensi hari ini" : "Absensi hari ini lengkap"}
+              </h2>
+              <p className={`mt-1 text-sm ${missingAttendance.count ? "text-amber-900" : "text-emerald-800"}`}>
+                {missingAttendance.count
+                  ? `${missingAttendance.count} marketing aktif belum tercatat absen${missingAttendance.date ? ` pada ${formatTanggal(missingAttendance.date)}` : ""}.`
+                  : "Semua marketing aktif sudah tercatat hadir hari ini."}
+              </p>
+              {missingAttendance.count > 0 && (
+                <p className="mt-2 text-sm leading-6 text-slate-700" data-testid="attendance-reminder-names">
+                  {missingAttendance.names.slice(0, 8).join(", ")}
+                  {missingAttendance.count > 8 ? `, dan ${missingAttendance.count - 8} lainnya` : ""}
+                </p>
+              )}
+            </div>
+            {missingAttendance.date && (
+              <time className="text-xs font-semibold text-slate-600" dateTime={missingAttendance.date}>
+                {formatTanggal(missingAttendance.date)}
+              </time>
+            )}
           </div>
         </section>
 

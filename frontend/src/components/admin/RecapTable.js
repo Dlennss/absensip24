@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { toast } from "sonner";
-import { Download, Eye, ImageOff, Minus, Pencil, Plus, Printer, ReceiptText, Search, Trash2 } from "lucide-react";
+import { Download, Eye, History, ImageOff, Minus, Pencil, Plus, Printer, ReceiptText, Search, Trash2 } from "lucide-react";
 import api, { API_BASE, formatApiError, formatRupiah, formatTanggal } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -174,6 +174,9 @@ export default function RecapTable({
   const [adjustmentNote, setAdjustmentNote] = useState("");
   const [adjustmentKind, setAdjustmentKind] = useState("other");
   const [editingAdjustment, setEditingAdjustment] = useState(null);
+  const [auditOpen, setAuditOpen] = useState(false);
+  const [auditLoading, setAuditLoading] = useState(false);
+  const [auditEvents, setAuditEvents] = useState([]);
 
   const fetchRecap = useCallback(async () => {
     try {
@@ -296,6 +299,22 @@ export default function RecapTable({
     }
   };
 
+  const openAdjustmentAudit = async () => {
+    if (!selectedRecap) return;
+    setAuditOpen(true);
+    setAuditLoading(true);
+    try {
+      const { data } = await api.get("/salary-adjustments/audit", {
+        params: { month, name: selectedRecap.name },
+      });
+      setAuditEvents(data);
+    } catch (error) {
+      toast.error(formatApiError(error));
+    } finally {
+      setAuditLoading(false);
+    }
+  };
+
   const resetAdjustmentForm = () => {
     setAdjustmentAmount("");
     setAdjustmentNote("");
@@ -358,7 +377,7 @@ export default function RecapTable({
     if (!window.confirm("Hapus penyesuaian gaji ini?")) return;
     try {
       await api.delete(`/salary-adjustments/${item.id}`);
-      toast.success("Penyesuaian gaji dihapus");
+      toast.success("Penyesuaian gaji diarsipkan");
       if (editingAdjustment?.id === item.id) resetAdjustmentForm();
       fetchRecap();
     } catch (err) {
@@ -613,11 +632,16 @@ export default function RecapTable({
           </div>
 
           <section className="rounded-lg border border-slate-200 bg-slate-50 p-4">
-            <div className="mb-4 flex flex-col gap-1">
-              <h3 className="text-sm font-extrabold text-slate-950">Penyesuaian Gaji</h3>
-              <p className="text-xs font-medium text-slate-500">
-                Potongan tidak masuk dihitung dari absensi; simpan keterangannya tanpa nominal agar tidak terpotong dua kali.
-              </p>
+            <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+              <div className="flex flex-col gap-1">
+                <h3 className="text-sm font-extrabold text-slate-950">Penyesuaian Gaji</h3>
+                <p className="text-xs font-medium text-slate-500">
+                  Potongan tidak masuk dihitung dari absensi; simpan keterangannya tanpa nominal agar tidak terpotong dua kali.
+                </p>
+              </div>
+              <Button type="button" variant="outline" onClick={openAdjustmentAudit} className="h-9 border-slate-200 bg-white font-semibold" data-testid="salary-adjustment-audit-button">
+                <History className="h-4 w-4" /> Riwayat
+              </Button>
             </div>
             <div className="grid gap-3 md:grid-cols-[160px_190px_minmax(220px,1fr)_auto] md:items-end">
               <div className="space-y-2">
@@ -816,6 +840,45 @@ export default function RecapTable({
               </article>
             ))}
           </div>
+        </DialogContent>
+      </Dialog>
+      <Dialog open={auditOpen} onOpenChange={setAuditOpen}>
+        <DialogContent className="max-h-[85dvh] max-w-2xl overflow-y-auto rounded-lg" data-testid="salary-adjustment-audit-dialog">
+          <DialogHeader>
+            <DialogTitle>Riwayat perubahan gaji</DialogTitle>
+            <DialogDescription>
+              {selectedRecap ? `${selectedRecap.name} · ${monthLabel(month)}` : monthLabel(month)}
+            </DialogDescription>
+          </DialogHeader>
+          {auditLoading ? (
+            <p className="py-8 text-center text-sm text-slate-500">Memuat riwayat...</p>
+          ) : auditEvents.length ? (
+            <ol className="space-y-3" data-testid="salary-adjustment-audit-list">
+              {auditEvents.map((event) => {
+                const valueLabel = (value) => value
+                  ? `${adjustmentKindLabel(value.kind, value.amount)} · ${value.note || "Tanpa catatan"} · ${value.kind === "absence_note" ? "Tanpa nominal" : formatRupiah(value.amount)}`
+                  : "Tidak ada";
+                const actionLabel = { created: "Dibuat", updated: "Diubah", deleted: "Diarsipkan" }[event.action] || event.action;
+                return (
+                  <li key={event.id} className="rounded-md border border-slate-200 bg-white p-3" data-testid="salary-adjustment-audit-entry">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <span className="text-sm font-bold text-slate-900">{actionLabel}</span>
+                      <time className="text-xs text-slate-500" dateTime={event.created_at}>
+                        {new Date(event.created_at).toLocaleString("id-ID", { dateStyle: "medium", timeStyle: "short" })}
+                      </time>
+                    </div>
+                    <p className="mt-1 text-xs text-slate-500">Oleh {event.actor_email}</p>
+                    <dl className="mt-3 grid gap-2 text-sm sm:grid-cols-2">
+                      <div><dt className="text-xs font-semibold text-slate-500">Sebelumnya</dt><dd className="mt-1 break-words text-slate-800">{valueLabel(event.before)}</dd></div>
+                      <div><dt className="text-xs font-semibold text-slate-500">Sesudahnya</dt><dd className="mt-1 break-words text-slate-800">{valueLabel(event.after)}</dd></div>
+                    </dl>
+                  </li>
+                );
+              })}
+            </ol>
+          ) : (
+            <p className="py-8 text-center text-sm text-slate-500">Belum ada perubahan penyesuaian gaji pada periode ini.</p>
+          )}
         </DialogContent>
       </Dialog>
       <PayrollSlipDialog

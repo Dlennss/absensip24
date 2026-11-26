@@ -161,6 +161,53 @@ def serialize_salary_adjustment(doc: dict) -> dict:
     }
 
 
+def salary_adjustment_snapshot(doc: Optional[dict]) -> Optional[dict]:
+    if not doc:
+        return None
+    return {
+        "name": doc["name"],
+        "month": doc["month"],
+        "amount": int(doc["amount"]),
+        "note": doc.get("note", ""),
+        "kind": doc.get("kind", "other"),
+    }
+
+
+def serialize_salary_adjustment_audit(doc: dict) -> dict:
+    return {
+        "id": str(doc["_id"]),
+        "adjustment_id": doc["adjustment_id"],
+        "name": doc["name"],
+        "month": doc["month"],
+        "action": doc["action"],
+        "actor_email": doc["actor_email"],
+        "created_at": doc["created_at"],
+        "before": doc.get("before"),
+        "after": doc.get("after"),
+    }
+
+
+async def record_salary_adjustment_audit(
+    adjustment_id: str,
+    action: str,
+    before: Optional[dict],
+    after: Optional[dict],
+    admin: dict,
+):
+    snapshot = after or before
+    await db.salary_adjustment_audit.insert_one({
+        "adjustment_id": adjustment_id,
+        "name": snapshot["name"],
+        "name_lower": snapshot["name"].lower(),
+        "month": snapshot["month"],
+        "action": action,
+        "actor_email": admin.get("email", "Admin"),
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "before": before,
+        "after": after,
+    })
+
+
 def today_jakarta():
     return datetime.now(JAKARTA_TZ).date()
 
@@ -624,6 +671,20 @@ async def list_attendance(month: Optional[str] = None, admin=Depends(get_current
     return [serialize_attendance(d) for d in docs]
 
 
+@api_router.get("/attendance/missing")
+async def list_missing_attendance(admin=Depends(get_current_admin)):
+    date = today_jakarta().isoformat()
+    attended_names = await db.attendance.distinct("name_lower", {"date": date})
+    docs = await db.marketing.find(
+        {
+            "name_lower": {"$nin": attended_names},
+            "profile.is_active": {"$ne": False},
+        },
+        {"name": 1},
+    ).sort("name", 1).to_list(1000)
+    return {"date": date, "names": [doc["name"] for doc in docs], "count": len(docs)}
+
+
 @api_router.post("/attendance/manual", status_code=201)
 async def add_attendance_manual(
     name: str = Form(...),
@@ -713,8 +774,26 @@ async def delete_attendance(attendance_id: str, admin=Depends(get_current_admin)
 async def list_salary_adjustments(month: str, admin=Depends(get_current_admin)):
     if not MONTH_RE.match(month):
         raise HTTPException(status_code=400, detail="Format bulan harus YYYY-MM")
-    docs = await db.salary_adjustments.find({"month": month}).sort([("name", 1), ("created_at", 1)]).to_list(5000)
+    docs = await db.salary_adjustments.find({"month": month, "is_deleted": {"$ne": True}}).sort([("name", 1), ("created_at", 1)]).to_list(5000)
     return [serialize_salary_adjustment(d) for d in docs]
+
+
+@api_router.get("/salary-adjustments/audit")
+async def list_salary_adjustment_audit(
+    month: str,
+    name: str,
+    admin=Depends(get_current_admin),
+):
+    if not MONTH_RE.fullmatch(month) or not 1 <= int(month[5:]) <= 12:
+        raise HTTPException(status_code=400, detail="Format bulan harus YYYY-MM")
+    normalized_name = name.strip().lower()
+    if not normalized_name:
+        raise HTTPException(status_code=400, detail="Nama marketing wajib diisi")
+    docs = await db.salary_adjustment_audit.find({
+        "month": month,
+        "name_lower": normalized_name,
+    }).sort("created_at", -1).to_list(5000)
+    return [serialize_salary_adjustment_audit(doc) for doc in docs]
 
 
 @api_router.post("/salary-adjustments", status_code=201)
@@ -740,6 +819,13 @@ async def create_salary_adjustment(input: SalaryAdjustmentInput, admin=Depends(g
     }
     result = await db.salary_adjustments.insert_one(doc)
     doc["_id"] = result.inserted_id
+    try:
+        await record_salary_adjustment_audit(
+            str(result.inserted_id), "created", None, salary_adjustment_snapshot(doc), admin
+        )
+    except Exception:
+        await db.salary_adjustments.delete_one({"_id": result.inserted_id})
+        raise
     return serialize_salary_adjustment(doc)
 
 
@@ -757,7 +843,7 @@ async def update_salary_adjustment(adjustment_id: str, input: SalaryAdjustmentIn
         raise HTTPException(status_code=400, detail="Nominal tidak boleh 0")
     if input.kind == "cash_advance" and input.amount > 0:
         raise HTTPException(status_code=400, detail="Kasbon harus dicatat sebagai potongan")
-    doc = await db.salary_adjustments.find_one({"_id": oid})
+    doc = await db.salary_adjustments.find_one({"_id": oid, "is_deleted": {"$ne": True}})
     if not doc:
         raise HTTPException(status_code=404, detail="Penyesuaian gaji tidak ditemukan")
     marketing = await require_registered_marketing(input.name)
@@ -770,9 +856,21 @@ async def update_salary_adjustment(adjustment_id: str, input: SalaryAdjustmentIn
         "kind": input.kind,
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }
-    await db.salary_adjustments.update_one({"_id": oid}, {"$set": update})
-    doc.update(update)
-    return serialize_salary_adjustment(doc)
+    result = await db.salary_adjustments.update_one({"_id": oid, "is_deleted": {"$ne": True}}, {"$set": update})
+    if not result.matched_count:
+        raise HTTPException(status_code=404, detail="Penyesuaian gaji tidak ditemukan")
+    updated_doc = {**doc, **update}
+    try:
+        await record_salary_adjustment_audit(
+            str(oid), "updated", salary_adjustment_snapshot(doc), salary_adjustment_snapshot(updated_doc), admin
+        )
+    except Exception:
+        await db.salary_adjustments.update_one(
+            {"_id": oid},
+            {"$set": {key: doc.get(key) for key in ("name", "name_lower", "month", "amount", "note", "kind", "updated_at")}},
+        )
+        raise
+    return serialize_salary_adjustment(updated_doc)
 
 
 @api_router.delete("/salary-adjustments/{adjustment_id}")
@@ -781,10 +879,26 @@ async def delete_salary_adjustment(adjustment_id: str, admin=Depends(get_current
         oid = ObjectId(adjustment_id)
     except Exception:
         raise HTTPException(status_code=400, detail="ID tidak valid")
-    result = await db.salary_adjustments.delete_one({"_id": oid})
-    if result.deleted_count == 0:
+    doc = await db.salary_adjustments.find_one({"_id": oid, "is_deleted": {"$ne": True}})
+    if not doc:
         raise HTTPException(status_code=404, detail="Penyesuaian gaji tidak ditemukan")
-    return {"message": "Penyesuaian gaji berhasil dihapus"}
+    deleted_at = datetime.now(timezone.utc).isoformat()
+    result = await db.salary_adjustments.update_one(
+        {"_id": oid, "is_deleted": {"$ne": True}},
+        {"$set": {"is_deleted": True, "deleted_at": deleted_at}},
+    )
+    if not result.matched_count:
+        raise HTTPException(status_code=404, detail="Penyesuaian gaji tidak ditemukan")
+    try:
+        await record_salary_adjustment_audit(
+            str(oid), "deleted", salary_adjustment_snapshot(doc), None, admin
+        )
+    except Exception:
+        await db.salary_adjustments.update_one(
+            {"_id": oid}, {"$unset": {"is_deleted": "", "deleted_at": ""}}
+        )
+        raise
+    return {"message": "Penyesuaian gaji diarsipkan dan tidak lagi dihitung"}
 
 
 @api_router.get("/salary-slips/{marketing_id}")
@@ -804,7 +918,7 @@ async def get_salary_slip(marketing_id: str, month: str, admin=Depends(get_curre
         {"name_lower": marketing["name_lower"], "date": {"$regex": f"^{month}-"}}
     ).to_list(35)
     adjustments = await db.salary_adjustments.find(
-        {"name_lower": marketing["name_lower"], "month": month}
+        {"name_lower": marketing["name_lower"], "month": month, "is_deleted": {"$ne": True}}
     ).sort("created_at", 1).to_list(5000)
     slip = await db.salary_slips.find_one({"marketing_id": str(oid), "month": month})
 
@@ -926,6 +1040,7 @@ async def startup():
     await db.marketing.create_index("name_lower", unique=True)
     await db.attendance.create_index([("name_lower", 1), ("date", 1)], unique=True)
     await db.salary_adjustments.create_index([("name_lower", 1), ("month", 1)])
+    await db.salary_adjustment_audit.create_index([("name_lower", 1), ("month", 1), ("created_at", -1)])
     await db.salary_slips.create_index([("marketing_id", 1), ("month", 1)], unique=True)
     await db.login_attempts.create_index("identifier")
     await seed_admin()
