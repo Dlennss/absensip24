@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
-import { Eye, Pencil, Plus, UsersRound } from "lucide-react";
+import { Eye, KeyRound, Pencil, Plus, UsersRound } from "lucide-react";
 import api, { formatApiError } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import MarketingProfileDialog from "./MarketingProfileDialog";
+import MarketingAccountDialog from "./MarketingAccountDialog";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   Table,
@@ -22,6 +23,7 @@ export default function MarketingTable() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [selectedProfile, setSelectedProfile] = useState(null);
   const [profileEditing, setProfileEditing] = useState(false);
+  const [selectedAccount, setSelectedAccount] = useState(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
 
@@ -95,7 +97,7 @@ export default function MarketingTable() {
               <TableHead>Alamat</TableHead>
               <TableHead>Bank / Rekening</TableHead>
               <TableHead>Status</TableHead>
-              <TableHead className="w-36 text-right">Aksi</TableHead>
+              <TableHead className="w-40 text-right">Aksi</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -119,6 +121,7 @@ export default function MarketingTable() {
                   <TableCell className={item.profile?.is_active === false ? "text-slate-500" : "font-semibold text-emerald-700"}>{item.profile?.is_active === false ? "Nonaktif" : "Aktif"}</TableCell>
                   <TableCell className="text-right">
                     <div className="flex justify-end gap-2">
+                      <Tooltip><TooltipTrigger asChild><Button type="button" variant="outline" size="icon" onClick={() => setSelectedAccount(item)} aria-label={`Kelola akun ${item.name}`} data-testid={`marketing-account-button-${item.id}`}><KeyRound className="h-4 w-4" /></Button></TooltipTrigger><TooltipContent>Kelola akun login</TooltipContent></Tooltip>
                       <Tooltip><TooltipTrigger asChild><Button type="button" variant="outline" size="icon" onClick={() => openProfile(item, false)} aria-label={`Lihat profil ${item.name}`} data-testid={`view-marketing-button-${item.id}`}><Eye className="h-4 w-4" /></Button></TooltipTrigger><TooltipContent>Lihat profil</TooltipContent></Tooltip>
                       <Tooltip><TooltipTrigger asChild>
                       <Button
@@ -144,6 +147,7 @@ export default function MarketingTable() {
       </TooltipProvider>
 
       {selectedProfile && <MarketingProfileDialog key={selectedProfile.id} item={selectedProfile} initialEditing={profileEditing} onClose={() => setSelectedProfile(null)} onSaved={(updated) => setMarketing((items) => items.map((item) => item.id === updated.id ? updated : item))} />}
+      {selectedAccount && <MarketingAccountDialog key={selectedAccount.id} item={selectedAccount} onClose={() => setSelectedAccount(null)} />}
 
       {dialogOpen && <MarketingProfileDialog initialEditing onClose={() => setDialogOpen(false)} onSaved={(created) => {
         setMarketing((items) => [...items, created].sort((a, b) => a.name.localeCompare(b.name)));

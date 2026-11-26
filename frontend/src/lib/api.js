@@ -22,9 +22,16 @@ export const API_BASE = resolveApiBase();
 export const API = `${API_BASE}/api`;
 
 const api = axios.create({ baseURL: API });
+export const marketingApi = axios.create({ baseURL: API });
 
 api.interceptors.request.use((config) => {
   const token = localStorage.getItem("admin_token");
+  if (token) config.headers.Authorization = `Bearer ${token}`;
+  return config;
+});
+
+marketingApi.interceptors.request.use((config) => {
+  const token = localStorage.getItem("marketing_token");
   if (token) config.headers.Authorization = `Bearer ${token}`;
   return config;
 });

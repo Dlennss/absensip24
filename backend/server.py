@@ -94,8 +94,56 @@ async def get_current_admin(request: Request) -> dict:
         raise HTTPException(status_code=401, detail="Token tidak valid")
 
 
+async def get_current_marketing(request: Request) -> dict:
+    auth_header = request.headers.get("Authorization", "")
+    token = auth_header[7:] if auth_header.startswith("Bearer ") else None
+    if not token:
+        raise HTTPException(status_code=401, detail="Tidak terautentikasi")
+    try:
+        payload = jwt.decode(token, get_jwt_secret(), algorithms=[JWT_ALGORITHM])
+        if payload.get("type") != "marketing_access":
+            raise HTTPException(status_code=401, detail="Token tidak valid")
+        if not ObjectId.is_valid(payload.get("sub", "")):
+            raise HTTPException(status_code=401, detail="Token tidak valid")
+        account = await db.marketing_accounts.find_one({"_id": ObjectId(payload["sub"]), "is_active": True})
+        if not account:
+            raise HTTPException(status_code=401, detail="Akun marketing tidak aktif")
+        if payload.get("auth_version", 0) != account.get("auth_version", 0):
+            raise HTTPException(status_code=401, detail="Sesi sudah tidak berlaku. Silakan login kembali.")
+        if not ObjectId.is_valid(account.get("marketing_id", "")):
+            raise HTTPException(status_code=401, detail="Akun marketing tidak valid")
+        marketing = await db.marketing.find_one({"_id": ObjectId(account["marketing_id"])})
+        if not marketing or (marketing.get("profile") or {}).get("is_active") is False:
+            raise HTTPException(status_code=403, detail="Akun marketing tidak aktif")
+        return {"account": account, "marketing": marketing}
+    except (KeyError, TypeError, ValueError):
+        raise HTTPException(status_code=401, detail="Token tidak valid")
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Token kedaluwarsa")
+    except jwt.InvalidTokenError:
+        raise HTTPException(status_code=401, detail="Token tidak valid")
+
+
 class LoginInput(BaseModel):
     email: str
+    password: str
+
+
+class MarketingLoginInput(BaseModel):
+    username: str
+    password: str
+
+
+class MarketingAccountInput(BaseModel):
+    username: str
+    password: str
+
+
+class MarketingAccountStatusInput(BaseModel):
+    is_active: bool
+
+
+class MarketingPasswordInput(BaseModel):
     password: str
 
 
@@ -383,6 +431,150 @@ async def me(admin=Depends(get_current_admin)):
     return admin
 
 
+def serialize_marketing_account(account: Optional[dict]) -> Optional[dict]:
+    if not account:
+        return None
+    return {
+        "username": account["username"],
+        "is_active": account.get("is_active", True),
+        "created_at": account.get("created_at"),
+        "updated_at": account.get("updated_at"),
+    }
+
+
+@api_router.post("/marketing/auth/login")
+async def marketing_login(input: MarketingLoginInput):
+    username = input.username.strip().lower()
+    identifier = f"marketing:{username}"
+    attempt = await db.login_attempts.find_one({"identifier": identifier})
+    if attempt and attempt.get("count", 0) >= 5:
+        locked_until = attempt.get("locked_until")
+        if locked_until and datetime.now(timezone.utc) < locked_until:
+            raise HTTPException(status_code=429, detail="Terlalu banyak percobaan. Coba lagi dalam 15 menit.")
+
+    account = await db.marketing_accounts.find_one({"username": username, "is_active": True})
+    password_hash = account.get("password_hash") if account else None
+    if not account or not password_hash or not verify_password(input.password, password_hash):
+        await db.login_attempts.update_one(
+            {"identifier": identifier},
+            {"$inc": {"count": 1}, "$set": {"locked_until": datetime.now(timezone.utc) + timedelta(minutes=15)}},
+            upsert=True,
+        )
+        raise HTTPException(status_code=401, detail="Username atau password salah")
+
+    marketing = await db.marketing.find_one({"_id": ObjectId(account["marketing_id"])})
+    if not marketing or (marketing.get("profile") or {}).get("is_active") is False:
+        raise HTTPException(status_code=403, detail="Akun marketing tidak aktif")
+    await db.login_attempts.delete_one({"identifier": identifier})
+    token = jwt.encode(
+        {"sub": str(account["_id"]), "role": "marketing", "auth_version": account.get("auth_version", 0), "exp": datetime.now(timezone.utc) + timedelta(hours=12), "type": "marketing_access"},
+        get_jwt_secret(), algorithm=JWT_ALGORITHM,
+    )
+    return {"access_token": token, "username": username, "name": marketing["name"]}
+
+
+@api_router.get("/marketing/auth/me")
+async def marketing_me(current=Depends(get_current_marketing)):
+    account, marketing = current["account"], current["marketing"]
+    return {"username": account["username"], "name": marketing["name"]}
+
+
+@api_router.get("/marketing/me/performance")
+async def marketing_performance(month: Optional[str] = None, current=Depends(get_current_marketing)):
+    marketing = current["marketing"]
+    if month and (not MONTH_RE.fullmatch(month) or not 1 <= int(month[5:]) <= 12):
+        raise HTTPException(status_code=400, detail="Format bulan harus YYYY-MM")
+    query = {"$or": [
+        {"marketing_id": str(marketing["_id"])},
+        {"marketing_id": {"$exists": False}, "name_lower": marketing["name_lower"]},
+    ]}
+    if month:
+        query["date"] = {"$regex": f"^{month}-"}
+    entries = await db.attendance.find(query).sort("date", -1).to_list(1000)
+    return {
+        "name": marketing["name"],
+        "month": month,
+        "attendance_days": len(entries),
+        "attendance": [{
+            "date": doc["date"],
+            "day_name": doc.get("day_name", ""),
+            "photo_url": doc.get("photo_url"),
+        } for doc in entries],
+    }
+
+
+@api_router.get("/marketing/{marketing_id}/account")
+async def get_marketing_account(marketing_id: str, admin=Depends(get_current_admin)):
+    try:
+        oid = ObjectId(marketing_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="ID tidak valid")
+    if not await db.marketing.find_one({"_id": oid}, {"_id": 1}):
+        raise HTTPException(status_code=404, detail="Data marketing tidak ditemukan")
+    account = await db.marketing_accounts.find_one({"marketing_id": str(oid)})
+    return serialize_marketing_account(account)
+
+
+@api_router.post("/marketing/{marketing_id}/account", status_code=201)
+async def create_marketing_account(marketing_id: str, input: MarketingAccountInput, admin=Depends(get_current_admin)):
+    try:
+        oid = ObjectId(marketing_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="ID tidak valid")
+    marketing = await db.marketing.find_one({"_id": oid})
+    if not marketing:
+        raise HTTPException(status_code=404, detail="Data marketing tidak ditemukan")
+    username = input.username.strip().lower()
+    if not re.fullmatch(r"[a-z0-9._-]{3,40}", username):
+        raise HTTPException(status_code=400, detail="Username harus 3-40 karakter: huruf, angka, titik, garis bawah, atau tanda hubung")
+    if len(input.password) < 10 or len(input.password.encode("utf-8")) > 72:
+        raise HTTPException(status_code=400, detail="Password harus 10-72 byte")
+    if await db.marketing_accounts.find_one({"marketing_id": str(oid)}):
+        raise HTTPException(status_code=409, detail="Akun marketing ini sudah dibuat")
+    account = {
+        "marketing_id": str(oid), "username": username, "password_hash": hash_password(input.password),
+        "is_active": True, "auth_version": 0, "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    try:
+        result = await db.marketing_accounts.insert_one(account)
+    except DuplicateKeyError:
+        raise HTTPException(status_code=409, detail="Username sudah digunakan atau akun sudah dibuat")
+    account["_id"] = result.inserted_id
+    return serialize_marketing_account(account)
+
+
+@api_router.put("/marketing/{marketing_id}/account/password")
+async def reset_marketing_password(marketing_id: str, input: MarketingPasswordInput, admin=Depends(get_current_admin)):
+    try:
+        oid = ObjectId(marketing_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="ID tidak valid")
+    if len(input.password) < 10 or len(input.password.encode("utf-8")) > 72:
+        raise HTTPException(status_code=400, detail="Password harus 10-72 byte")
+    result = await db.marketing_accounts.update_one(
+        {"marketing_id": str(oid)},
+        {"$set": {"password_hash": hash_password(input.password), "updated_at": datetime.now(timezone.utc).isoformat()}, "$inc": {"auth_version": 1}},
+    )
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Akun marketing belum dibuat")
+    return {"message": "Password akun berhasil direset"}
+
+
+@api_router.patch("/marketing/{marketing_id}/account")
+async def set_marketing_account_status(marketing_id: str, input: MarketingAccountStatusInput, admin=Depends(get_current_admin)):
+    try:
+        oid = ObjectId(marketing_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="ID tidak valid")
+    result = await db.marketing_accounts.update_one(
+        {"marketing_id": str(oid)},
+        {"$set": {"is_active": input.is_active, "updated_at": datetime.now(timezone.utc).isoformat()}, "$inc": {"auth_version": 1}},
+    )
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Akun marketing belum dibuat")
+    return serialize_marketing_account(await db.marketing_accounts.find_one({"marketing_id": str(oid)}))
+
+
 @api_router.get("/marketing")
 async def list_marketing_public(q: Optional[str] = None):
     query = {}
@@ -640,6 +832,7 @@ async def submit_attendance(
     )
     photo_url = await save_photo(photo, location)
     doc = {
+        "marketing_id": str(marketing["_id"]),
         "name": marketing["name"],
         "name_lower": marketing["name_lower"],
         "date": date_str,
@@ -707,6 +900,7 @@ async def add_attendance_manual(
         raise HTTPException(status_code=409, detail="Data absensi untuk nama dan tanggal ini sudah ada")
     photo_url = await save_photo(photo) if photo and photo.filename else None
     doc = {
+        "marketing_id": str(marketing["_id"]),
         "name": marketing["name"],
         "name_lower": marketing["name_lower"],
         "date": date,
@@ -749,6 +943,7 @@ async def update_attendance(
         raise HTTPException(status_code=409, detail="Data absensi untuk nama dan tanggal ini sudah ada")
     update["name"] = marketing["name"]
     update["name_lower"] = marketing["name_lower"]
+    update["marketing_id"] = str(marketing["_id"])
     update["date"] = new_date
     update["day_name"] = DAY_NAMES_ID[d.weekday()]
     if photo and photo.filename:
@@ -1038,6 +1233,8 @@ async def seed_admin():
 async def startup():
     await db.users.create_index("email", unique=True)
     await db.marketing.create_index("name_lower", unique=True)
+    await db.marketing_accounts.create_index("marketing_id", unique=True)
+    await db.marketing_accounts.create_index("username", unique=True)
     await db.attendance.create_index([("name_lower", 1), ("date", 1)], unique=True)
     await db.salary_adjustments.create_index([("name_lower", 1), ("month", 1)])
     await db.salary_adjustment_audit.create_index([("name_lower", 1), ("month", 1), ("created_at", -1)])

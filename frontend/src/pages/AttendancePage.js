@@ -509,6 +509,11 @@ export default function AttendancePage() {
             Masuk sebagai Admin
           </a>
         </p>
+        <p className="mt-2 text-center">
+          <a href="/marketing/login" className="text-sm font-semibold text-slate-500 transition-colors duration-200 hover:text-emerald-700">
+            Masuk sebagai Marketing
+          </a>
+        </p>
         </section>
       </main>
     </div>
