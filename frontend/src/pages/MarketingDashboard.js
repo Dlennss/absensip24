@@ -4,6 +4,7 @@ import { CalendarDays, LogOut, UserRound } from "lucide-react";
 import { marketingApi, API_BASE, formatApiError } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 
 const currentJakartaMonth = () => new Date().toLocaleDateString("sv-SE", { timeZone: "Asia/Jakarta" }).slice(0, 7);
 
@@ -14,6 +15,7 @@ export default function MarketingDashboard() {
   const [report, setReport] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [photoPreview, setPhotoPreview] = useState(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -72,12 +74,20 @@ export default function MarketingDashboard() {
             <ul className="divide-y divide-slate-100">
               {report.attendance.map((entry) => <li key={entry.date} className="flex items-center justify-between gap-3 px-4 py-3">
                 <div><p className="font-semibold text-slate-900">{entry.day_name}, {new Date(`${entry.date}T00:00:00`).toLocaleDateString("id-ID", { day: "numeric", month: "long", year: "numeric" })}</p><p className="text-sm text-emerald-700">Hadir</p></div>
-                {entry.photo_url && <a href={`${API_BASE}${entry.photo_url}`} target="_blank" rel="noreferrer" className="text-sm font-semibold text-emerald-700 hover:underline">Lihat foto</a>}
+                {entry.photo_url && <Button type="button" variant="outline" size="sm" onClick={() => setPhotoPreview(entry)} aria-label={`Lihat foto absensi ${entry.date}`}>Lihat foto</Button>}
               </li>)}
             </ul>
           ) : <p className="p-6 text-sm text-slate-500">Belum ada absensi pada bulan ini.</p>}
         </div>
       </section>
+      <Dialog open={!!photoPreview} onOpenChange={(open) => { if (!open) setPhotoPreview(null); }}>
+        <DialogContent className="max-h-[90dvh] max-w-2xl overflow-y-auto rounded-lg" data-testid="marketing-photo-preview-dialog">
+          <DialogHeader>
+            <DialogTitle>Foto Absensi{photoPreview ? ` - ${photoPreview.day_name}, ${new Date(`${photoPreview.date}T00:00:00`).toLocaleDateString("id-ID", { day: "numeric", month: "long", year: "numeric" })}` : ""}</DialogTitle>
+          </DialogHeader>
+          {photoPreview?.photo_url && <img src={`${API_BASE}${photoPreview.photo_url}`} alt={`Foto absensi ${photoPreview.date}`} className="max-h-[70dvh] w-full rounded-lg border border-slate-200 bg-slate-50 object-contain" data-testid="marketing-photo-preview-image" />}
+        </DialogContent>
+      </Dialog>
     </main>
   );
 }
