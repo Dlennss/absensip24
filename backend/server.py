@@ -147,6 +147,22 @@ class MarketingPasswordInput(BaseModel):
     password: str
 
 
+class MarketingPasswordChangeInput(BaseModel):
+    current_password: str
+    new_password: str
+
+
+class AttendanceCorrectionInput(BaseModel):
+    attendance_id: str
+    corrected_date: Optional[str] = None
+    reason: str
+
+
+class AttendanceCorrectionReviewInput(BaseModel):
+    decision: Literal["approve", "reject"]
+    review_note: Optional[str] = None
+
+
 class MarketingInput(BaseModel):
     name: str
 
@@ -454,7 +470,8 @@ async def marketing_login(input: MarketingLoginInput):
 
     account = await db.marketing_accounts.find_one({"username": username, "is_active": True})
     password_hash = account.get("password_hash") if account else None
-    if not account or not password_hash or not verify_password(input.password, password_hash):
+    password_valid = len(input.password.encode("utf-8")) <= 72 and bool(password_hash) and verify_password(input.password, password_hash)
+    if not account or not password_valid:
         await db.login_attempts.update_one(
             {"identifier": identifier},
             {"$inc": {"count": 1}, "$set": {"locked_until": datetime.now(timezone.utc) + timedelta(minutes=15)}},
@@ -496,11 +513,199 @@ async def marketing_performance(month: Optional[str] = None, current=Depends(get
         "month": month,
         "attendance_days": len(entries),
         "attendance": [{
+            "id": str(doc["_id"]),
             "date": doc["date"],
             "day_name": doc.get("day_name", ""),
             "photo_url": doc.get("photo_url"),
         } for doc in entries],
     }
+
+
+def serialize_attendance_correction(doc: dict) -> dict:
+    return {
+        "id": str(doc["_id"]),
+        "marketing_id": doc["marketing_id"],
+        "marketing_name": doc["marketing_name"],
+        "attendance_id": doc["attendance_id"],
+        "original_date": doc["original_date"],
+        "corrected_date": doc.get("corrected_date"),
+        "reason": doc["reason"],
+        "status": doc["status"],
+        "created_at": doc["created_at"],
+        "reviewed_at": doc.get("reviewed_at"),
+        "reviewed_by": doc.get("reviewed_by"),
+        "review_note": doc.get("review_note", ""),
+    }
+
+
+@api_router.put("/marketing/me/password")
+async def change_marketing_password(input: MarketingPasswordChangeInput, current=Depends(get_current_marketing)):
+    account = current["account"]
+    if len(input.current_password.encode("utf-8")) > 72:
+        raise HTTPException(status_code=400, detail="Password saat ini tidak sesuai")
+    if not verify_password(input.current_password, account["password_hash"]):
+        raise HTTPException(status_code=400, detail="Password saat ini tidak sesuai")
+    if len(input.new_password) < 10 or len(input.new_password.encode("utf-8")) > 72:
+        raise HTTPException(status_code=400, detail="Password baru harus 10-72 byte")
+    result = await db.marketing_accounts.update_one(
+        {"_id": account["_id"], "auth_version": account.get("auth_version", 0)},
+        {"$set": {"password_hash": hash_password(input.new_password), "updated_at": datetime.now(timezone.utc).isoformat()}, "$inc": {"auth_version": 1}},
+    )
+    if not result.matched_count:
+        raise HTTPException(status_code=409, detail="Akun berubah. Login ulang sebelum mengubah password.")
+    return {"message": "Password berhasil diperbarui. Silakan login kembali."}
+
+
+@api_router.get("/marketing/me/correction-requests")
+async def list_my_attendance_corrections(month: Optional[str] = None, current=Depends(get_current_marketing)):
+    if month and (not MONTH_RE.fullmatch(month) or not 1 <= int(month[5:]) <= 12):
+        raise HTTPException(status_code=400, detail="Format bulan harus YYYY-MM")
+    query = {"marketing_id": str(current["marketing"]["_id"])}
+    if month:
+        query["original_date"] = {"$regex": f"^{month}-"}
+    docs = await db.attendance_correction_requests.find(query).sort("created_at", -1).to_list(500)
+    return [serialize_attendance_correction(doc) for doc in docs]
+
+
+@api_router.get("/marketing/me/salary-slip")
+async def get_my_salary_slip(month: str, current=Depends(get_current_marketing)):
+    if not MONTH_RE.fullmatch(month) or not 1 <= int(month[5:]) <= 12:
+        raise HTTPException(status_code=400, detail="Format bulan harus YYYY-MM")
+    return await build_salary_slip(current["marketing"], month)
+
+
+@api_router.post("/marketing/me/correction-requests", status_code=201)
+async def create_attendance_correction(input: AttendanceCorrectionInput, current=Depends(get_current_marketing)):
+    marketing = current["marketing"]
+    reason = input.reason.strip()
+    if len(reason) < 10 or len(reason) > 1000:
+        raise HTTPException(status_code=400, detail="Alasan harus berisi 10-1000 karakter")
+    if not ObjectId.is_valid(input.attendance_id):
+        raise HTTPException(status_code=400, detail="ID absensi tidak valid")
+    corrected_date = (input.corrected_date or "").strip() or None
+    if corrected_date:
+        try:
+            parsed_date = datetime.strptime(corrected_date, "%Y-%m-%d").date()
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Format tanggal koreksi tidak valid")
+        if parsed_date.isoformat() != corrected_date:
+            raise HTTPException(status_code=400, detail="Format tanggal koreksi tidak valid")
+        if parsed_date > today_jakarta():
+            raise HTTPException(status_code=400, detail="Tanggal koreksi tidak boleh di masa depan")
+
+    attendance_id = ObjectId(input.attendance_id)
+    attendance = await db.attendance.find_one({
+        "_id": attendance_id,
+        "$or": [
+            {"marketing_id": str(marketing["_id"])},
+            {"marketing_id": {"$exists": False}, "name_lower": marketing["name_lower"]},
+        ],
+    })
+    if not attendance:
+        raise HTTPException(status_code=404, detail="Data absensi tidak ditemukan pada akun ini")
+    if corrected_date == attendance["date"]:
+        raise HTTPException(status_code=400, detail="Tanggal baru sama dengan tanggal absensi saat ini")
+    if await db.attendance_correction_requests.find_one({"attendance_id": str(attendance_id), "status": {"$in": ["pending", "reviewing"]}}):
+        raise HTTPException(status_code=409, detail="Pengajuan untuk data absensi ini masih menunggu admin")
+
+    doc = {
+        "marketing_id": str(marketing["_id"]),
+        "marketing_name": marketing["name"],
+        "attendance_id": str(attendance_id),
+        "original_date": attendance["date"],
+        "corrected_date": corrected_date,
+        "reason": reason,
+        "status": "pending",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    try:
+        result = await db.attendance_correction_requests.insert_one(doc)
+    except DuplicateKeyError:
+        raise HTTPException(status_code=409, detail="Pengajuan untuk data absensi ini masih menunggu admin")
+    doc["_id"] = result.inserted_id
+    return serialize_attendance_correction(doc)
+
+
+@api_router.get("/attendance-correction-requests")
+async def list_attendance_corrections(status: str = "pending", admin=Depends(get_current_admin)):
+    if status not in {"pending", "approved", "rejected", "all"}:
+        raise HTTPException(status_code=400, detail="Status pengajuan tidak valid")
+    query = {} if status == "all" else {"status": status}
+    docs = await db.attendance_correction_requests.find(query).sort("created_at", -1).to_list(1000)
+    return [serialize_attendance_correction(doc) for doc in docs]
+
+
+@api_router.patch("/attendance-correction-requests/{request_id}")
+async def review_attendance_correction(request_id: str, input: AttendanceCorrectionReviewInput, admin=Depends(get_current_admin)):
+    if not ObjectId.is_valid(request_id):
+        raise HTTPException(status_code=400, detail="ID pengajuan tidak valid")
+    oid = ObjectId(request_id)
+    correction = await db.attendance_correction_requests.find_one({"_id": oid, "status": "pending"})
+    if not correction:
+        raise HTTPException(status_code=404, detail="Pengajuan tidak ditemukan atau sudah ditinjau")
+
+    attendance = None
+    attendance_id = None
+    if input.decision == "approve" and correction.get("corrected_date"):
+        attendance_id = ObjectId(correction["attendance_id"])
+        marketing_id = correction["marketing_id"]
+        marketing = await db.marketing.find_one({"_id": ObjectId(marketing_id)})
+        if not marketing:
+            raise HTTPException(status_code=404, detail="Data marketing terkait tidak ditemukan")
+        attendance = await db.attendance.find_one({
+            "_id": attendance_id,
+            "date": correction["original_date"],
+            "$or": [
+                {"marketing_id": marketing_id},
+                {"marketing_id": {"$exists": False}, "name_lower": marketing["name_lower"]},
+            ],
+        })
+        if not attendance:
+            raise HTTPException(status_code=409, detail="Data absensi sudah berubah. Periksa data sebelum meninjau pengajuan.")
+        duplicate = await db.attendance.find_one({
+            "name_lower": attendance["name_lower"],
+            "date": correction["corrected_date"],
+            "_id": {"$ne": attendance_id},
+        })
+        if duplicate:
+            raise HTTPException(status_code=409, detail="Marketing sudah memiliki absensi pada tanggal yang diminta")
+    reviewed_at = datetime.now(timezone.utc).isoformat()
+    claim = await db.attendance_correction_requests.update_one(
+        {"_id": oid, "status": "pending"},
+        {"$set": {
+            "status": "reviewing",
+            "review_decision": input.decision,
+            "reviewed_at": reviewed_at,
+            "reviewed_by": admin.get("email", "Admin"),
+            "review_note": (input.review_note or "").strip()[:1000],
+        }},
+    )
+    if not claim.matched_count:
+        raise HTTPException(status_code=409, detail="Pengajuan sudah diproses admin lain")
+
+    if input.decision == "approve" and correction.get("corrected_date"):
+        try:
+            updated = await db.attendance.update_one(
+                {"_id": attendance_id, "date": correction["original_date"]},
+                {"$set": {"date": correction["corrected_date"], "day_name": DAY_NAMES_ID[datetime.strptime(correction["corrected_date"], "%Y-%m-%d").date().weekday()]}},
+            )
+            if not updated.matched_count:
+                raise HTTPException(status_code=409, detail="Data absensi berubah saat pengajuan diproses")
+        except (DuplicateKeyError, HTTPException) as error:
+            await db.attendance_correction_requests.update_one(
+                {"_id": oid, "status": "reviewing"},
+                {"$set": {"status": "pending"}, "$unset": {"review_decision": "", "reviewed_at": "", "reviewed_by": "", "review_note": ""}},
+            )
+            if isinstance(error, DuplicateKeyError):
+                raise HTTPException(status_code=409, detail="Marketing sudah memiliki absensi pada tanggal yang diminta")
+            raise
+
+    final_status = "approved" if input.decision == "approve" else "rejected"
+    await db.attendance_correction_requests.update_one(
+        {"_id": oid, "status": "reviewing"},
+        {"$set": {"status": final_status}, "$unset": {"review_decision": ""}},
+    )
+    return serialize_attendance_correction(await db.attendance_correction_requests.find_one({"_id": oid}))
 
 
 @api_router.get("/marketing/{marketing_id}/account")
@@ -1109,6 +1314,12 @@ async def get_salary_slip(marketing_id: str, month: str, admin=Depends(get_curre
     if not marketing:
         raise HTTPException(status_code=404, detail="Data marketing tidak ditemukan")
 
+    return await build_salary_slip(marketing, month)
+
+
+async def build_salary_slip(marketing: dict, month: str) -> dict:
+    oid = marketing["_id"]
+
     attendance = await db.attendance.find(
         {"name_lower": marketing["name_lower"], "date": {"$regex": f"^{month}-"}}
     ).to_list(35)
@@ -1229,17 +1440,43 @@ async def seed_admin():
         await db.users.update_one({"email": admin_email}, {"$set": {"password_hash": hash_password(admin_password)}})
 
 
+async def recover_interrupted_correction_reviews():
+    pending = await db.attendance_correction_requests.find({"status": "reviewing"}).to_list(1000)
+    for request in pending:
+        decision = request.get("review_decision")
+        final_status = "pending"
+        if decision == "reject":
+            final_status = "rejected"
+        elif decision == "approve":
+            corrected_date = request.get("corrected_date")
+            if not corrected_date:
+                final_status = "approved"
+            elif await db.attendance.find_one({"_id": ObjectId(request["attendance_id"]), "date": corrected_date}):
+                final_status = "approved"
+        update = {"$set": {"status": final_status}, "$unset": {"review_decision": ""}}
+        if final_status == "pending":
+            update["$unset"].update({"reviewed_at": "", "reviewed_by": "", "review_note": ""})
+        await db.attendance_correction_requests.update_one(
+            {"_id": request["_id"], "status": "reviewing"}, update
+        )
+
+
 @app.on_event("startup")
 async def startup():
     await db.users.create_index("email", unique=True)
     await db.marketing.create_index("name_lower", unique=True)
     await db.marketing_accounts.create_index("marketing_id", unique=True)
     await db.marketing_accounts.create_index("username", unique=True)
+    await db.attendance_correction_requests.create_index(
+        "attendance_id", unique=True, partialFilterExpression={"status": "pending"}
+    )
+    await db.attendance_correction_requests.create_index([("marketing_id", 1), ("created_at", -1)])
     await db.attendance.create_index([("name_lower", 1), ("date", 1)], unique=True)
     await db.salary_adjustments.create_index([("name_lower", 1), ("month", 1)])
     await db.salary_adjustment_audit.create_index([("name_lower", 1), ("month", 1), ("created_at", -1)])
     await db.salary_slips.create_index([("marketing_id", 1), ("month", 1)], unique=True)
     await db.login_attempts.create_index("identifier")
+    await recover_interrupted_correction_reviews()
     await seed_admin()
 
 

@@ -8,6 +8,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import AttendanceTable from "@/components/admin/AttendanceTable";
 import RecapTable from "@/components/admin/RecapTable";
 import MarketingTable from "@/components/admin/MarketingTable";
+import CorrectionRequestsTable from "@/components/admin/CorrectionRequestsTable";
 
 export default function AdminDashboard() {
   const navigate = useNavigate();
@@ -149,7 +150,7 @@ export default function AdminDashboard() {
         </section>
 
         <Tabs defaultValue="data" className="rounded-lg border border-slate-200 bg-white p-3 shadow-sm sm:p-5">
-          <TabsList className="grid h-auto w-full grid-cols-2 rounded-lg bg-slate-100 p-1 sm:w-fit sm:grid-cols-4" data-testid="admin-tabs">
+          <TabsList className="grid h-auto w-full grid-cols-2 rounded-lg bg-slate-100 p-1 sm:w-fit sm:grid-cols-5" data-testid="admin-tabs">
             <TabsTrigger className="rounded-md px-4 py-2.5 font-bold data-[state=active]:bg-white data-[state=active]:text-emerald-700" value="data" data-testid="tab-data-absensi">
               Data Absensi
             </TabsTrigger>
@@ -161,6 +162,9 @@ export default function AdminDashboard() {
             </TabsTrigger>
             <TabsTrigger className="rounded-md px-4 py-2.5 font-bold data-[state=active]:bg-white data-[state=active]:text-emerald-700" value="marketing" data-testid="tab-marketing">
               Marketing
+            </TabsTrigger>
+            <TabsTrigger className="rounded-md px-4 py-2.5 font-bold data-[state=active]:bg-white data-[state=active]:text-emerald-700" value="corrections" data-testid="tab-correction-requests">
+              Koreksi
             </TabsTrigger>
           </TabsList>
           <TabsContent value="data" className="mt-6">
@@ -189,6 +193,9 @@ export default function AdminDashboard() {
           </TabsContent>
           <TabsContent value="marketing" className="mt-6">
             <MarketingTable />
+          </TabsContent>
+          <TabsContent value="corrections" className="mt-6">
+            <CorrectionRequestsTable />
           </TabsContent>
         </Tabs>
       </main>
