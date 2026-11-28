@@ -16,6 +16,15 @@ from marketing_profile import MarketingProfilePatch, profile_update, profile_val
 
 
 class ProfileValidationTests(unittest.TestCase):
+    def test_attendance_location_accuracy_boundary_and_invalid_numbers(self):
+        self.assertEqual(server.parse_location("-6.2", "106.8", "150")["accuracy"], 150)
+        with self.assertRaises(HTTPException) as error:
+            server.parse_location("-6.2", "106.8", "151")
+        self.assertEqual(error.exception.status_code, 400)
+        for latitude, accuracy in (("NaN", "10"), ("-6.2", "Infinity"), ("-6.2", "-1")):
+            with self.assertRaises(HTTPException):
+                server.parse_location(latitude, "106.8", accuracy)
+
     def test_legacy_record_is_read_without_mutation(self):
         doc = {"_id": ObjectId(), "name": "Lama", "name_lower": "lama"}
         before = copy.deepcopy(doc)

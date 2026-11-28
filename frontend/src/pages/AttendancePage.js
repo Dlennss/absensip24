@@ -19,33 +19,54 @@ export default function AttendancePage() {
   const [cameraReady, setCameraReady] = useState(false);
   const [cameraError, setCameraError] = useState("");
   const [validatingPhoto, setValidatingPhoto] = useState(false);
+  const [locationStatus, setLocationStatus] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
   const streamRef = useRef(null);
 
-  const getCurrentLocation = () =>
+  const getCurrentLocation = (onUpdate) =>
     new Promise((resolve, reject) => {
       if (!navigator.geolocation) {
         reject(new Error("Browser tidak mendukung lokasi GPS"));
         return;
       }
-      navigator.geolocation.getCurrentPosition(
-        (position) => resolve(position.coords),
-        (error) => {
-          const messages = {
-            1: "Izin lokasi ditolak. Aktifkan izin lokasi untuk situs ini lalu coba lagi.",
-            2: "Lokasi GPS belum tersedia. Aktifkan GPS dan coba lagi di area terbuka.",
-            3: "Pencarian lokasi terlalu lama. Coba lagi dengan GPS aktif.",
-          };
-          reject(new Error(messages[error.code] || "Lokasi GPS tidak dapat dibaca. Periksa pengaturan lokasi lalu coba lagi."));
-        },
-        {
-          enableHighAccuracy: true,
-          timeout: 15000,
-          maximumAge: 0,
+      let bestCoords = null;
+      let watchId;
+      let settled = false;
+      const finish = (callback, value) => {
+        if (settled) return;
+        settled = true;
+        window.clearTimeout(timer);
+        if (watchId !== undefined) navigator.geolocation.clearWatch(watchId);
+        callback(value);
+      };
+      const timer = window.setTimeout(() => {
+        if (bestCoords && bestCoords.accuracy <= 150) {
+          finish(resolve, bestCoords);
+          return;
         }
-      );
+        const accuracy = bestCoords ? ` Akurasi terbaik yang didapat ±${Math.round(bestCoords.accuracy)} m.` : "";
+        finish(reject, new Error(`GPS belum cukup presisi setelah 45 detik.${accuracy} Aktifkan Lokasi presisi untuk situs ini, matikan hemat baterai sementara, lalu coba lagi.`));
+      }, 45000);
+      try {
+        watchId = navigator.geolocation.watchPosition(
+          ({ coords }) => {
+            if (!Number.isFinite(coords.latitude) || !Number.isFinite(coords.longitude) || !Number.isFinite(coords.accuracy)) return;
+            if (!bestCoords || coords.accuracy < bestCoords.accuracy) bestCoords = coords;
+            onUpdate?.(bestCoords.accuracy);
+            if (bestCoords.accuracy <= 150) finish(resolve, bestCoords);
+          },
+          (error) => {
+            if (error.code === 1) {
+              finish(reject, new Error("Izin lokasi ditolak. Izinkan lokasi presisi untuk situs ini di pengaturan browser."));
+            }
+          },
+          { enableHighAccuracy: true, timeout: 45000, maximumAge: 0 }
+        );
+      } catch {
+        finish(reject, new Error("Lokasi GPS tidak dapat dimulai. Pastikan izin lokasi browser aktif."));
+      }
     });
 
   const today = new Date();
@@ -208,11 +229,10 @@ export default function AttendancePage() {
     }
     setValidatingPhoto(true);
     try {
-      const coords = await getCurrentLocation();
-      if (coords.accuracy && coords.accuracy > 150) {
-        toast.error("Akurasi lokasi terlalu rendah. Aktifkan GPS dan coba di area terbuka.");
-        return;
-      }
+      setLocationStatus("Mencari sinyal GPS presisi...");
+      const coords = await getCurrentLocation((accuracy) => {
+        setLocationStatus(`Mencari GPS presisi... akurasi saat ini ±${Math.round(accuracy)} m`);
+      });
       const video = videoRef.current;
       const canvas = canvasRef.current;
       const size = 900;
@@ -260,6 +280,7 @@ export default function AttendancePage() {
     } catch (error) {
       toast.error(error?.message || "Selfie gagal diambil. Periksa izin kamera dan lokasi lalu coba lagi.");
     } finally {
+      setLocationStatus("");
       setValidatingPhoto(false);
     }
   };
@@ -467,6 +488,11 @@ export default function AttendancePage() {
             {cameraError && (
               <p className="text-xs font-semibold text-red-600" data-testid="attendance-camera-error">
                 {cameraError}
+              </p>
+            )}
+            {locationStatus && (
+              <p className="text-xs font-semibold text-slate-600" role="status" aria-live="polite">
+                {locationStatus}
               </p>
             )}
             <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold leading-5 text-amber-800">

@@ -20,6 +20,7 @@ import re
 import jwt
 import bcrypt
 import logging
+import math
 import requests
 from io import BytesIO
 from marketing_profile import MarketingProfilePatch, MarketingRegistrationProfile, profile_update, profile_values
@@ -294,10 +295,12 @@ def parse_location(latitude: str, longitude: str, accuracy: Optional[str]) -> di
         acc = float(accuracy) if accuracy not in (None, "") else None
     except (TypeError, ValueError):
         raise HTTPException(status_code=400, detail="Lokasi GPS tidak valid")
-    if lat < -90 or lat > 90 or lng < -180 or lng > 180:
+    if not math.isfinite(lat) or not math.isfinite(lng) or lat < -90 or lat > 90 or lng < -180 or lng > 180:
         raise HTTPException(status_code=400, detail="Koordinat GPS tidak valid")
+    if acc is not None and (not math.isfinite(acc) or acc < 0):
+        raise HTTPException(status_code=400, detail="Nilai akurasi GPS tidak valid")
     if acc is not None and acc > 150:
-        raise HTTPException(status_code=400, detail="Akurasi lokasi terlalu rendah. Aktifkan GPS dan coba di area terbuka.")
+        raise HTTPException(status_code=400, detail=f"Akurasi lokasi ±{round(acc)} m masih terlalu rendah (maksimal 150 m). Aktifkan Lokasi presisi untuk situs ini dan coba lagi.")
     return {"latitude": lat, "longitude": lng, "accuracy": acc}
 
 
